@@ -3,8 +3,8 @@ import sqlite3
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.dependencies import get_db
-from app.repository import create_customer, delete_customer, get_customer, list_customers, update_customer
 from app.schemas import Customer, CustomerBase
+from app.services.customers import create_customer, delete_customer, get_customer, list_customers, update_customer
 
 router = APIRouter(prefix="/api/customers", tags=["customers"])
 

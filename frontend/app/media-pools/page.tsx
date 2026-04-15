@@ -1,14 +1,16 @@
 "use client";
 
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/app-shell";
 import { ActionButton, ActionsRow, Badge, OverlayPanel, SectionCard, SimpleTable } from "@/components/panel-primitives";
-import { getBalancedStrategyRules, getPoolStats, mediaPools as seedMediaPools, nodes, type MediaPoolRecord } from "@/lib/control-panel";
+import { createMediaPool, deleteMediaPool, listMediaPoolsRaw, listNodes, listNodesRaw, listVendorsRaw, mapBackendMediaPoolToFrontend, updateMediaPool } from "@/lib/api";
+import { getBalancedStrategyRules, getPoolStats, type MediaPoolRecord, type NodeRecord } from "@/lib/control-panel";
+import type { BackendNode } from "@/lib/types";
 
 const emptyPool = (): MediaPoolRecord => ({
-  id: `pool-${Date.now()}`,
+  id: "",
   name: "",
-  nodeName: nodes[0]?.name ?? "",
+  nodeName: "",
   strategy: "Balanced",
   status: "Active",
   notes: "",
@@ -17,17 +19,53 @@ const emptyPool = (): MediaPoolRecord => ({
 });
 
 export default function MediaPoolsPage() {
-  const [records, setRecords] = useState(seedMediaPools);
+  const [records, setRecords] = useState<MediaPoolRecord[]>([]);
+  const [nodeRecords, setNodeRecords] = useState<NodeRecord[]>([]);
+  const [backendNodes, setBackendNodes] = useState<BackendNode[]>([]);
   const [draft, setDraft] = useState<MediaPoolRecord | null>(null);
   const [mediaIpEdit, setMediaIpEdit] = useState<{ poolId: string; address: string } | null>(null);
+  const [mediaIpDraft, setMediaIpDraft] = useState<MediaPoolRecord["mediaIps"][number] | null>(null);
   const [mode, setMode] = useState<"add" | "edit" | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function load() {
+      setIsLoading(true);
+      const [nodesResponse, nodesRawResponse, vendorsResponse, poolsResponse] = await Promise.all([
+        listNodes(),
+        listNodesRaw(),
+        listVendorsRaw(),
+        listMediaPoolsRaw(),
+      ]);
+      if (cancelled) {
+        return;
+      }
+
+      const safeNodeRecords = nodesResponse ?? [];
+      const vendorNamesById = new Map((vendorsResponse ?? []).map((vendor) => [vendor.id, vendor.name]));
+      setNodeRecords(safeNodeRecords);
+      setBackendNodes(nodesRawResponse ?? []);
+      setRecords((poolsResponse ?? []).map((pool) => mapBackendMediaPoolToFrontend(pool, safeNodeRecords, vendorNamesById)));
+      setIsLoading(false);
+    }
+
+    void load();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const poolForIpEdit = records.find((pool) => pool.id === mediaIpEdit?.poolId) ?? null;
   const selectedMediaIp = poolForIpEdit?.mediaIps.find((item) => item.address === mediaIpEdit?.address) ?? null;
+  const nodeIdByName = useMemo(() => new Map(nodeRecords.map((node) => [node.name, Number(node.id)])), [nodeRecords]);
+  const backendNodeByName = useMemo(() => new Map(backendNodes.map((node) => [node.name, node])), [backendNodes]);
 
   function openAdd() {
     setMode("add");
-    setDraft(emptyPool());
+    setDraft({ ...emptyPool(), nodeName: nodeRecords[0]?.name ?? "" });
   }
 
   function openEdit(pool: MediaPoolRecord) {
@@ -40,47 +78,119 @@ export default function MediaPoolsPage() {
     setDraft(null);
   }
 
-  function savePool() {
+  function closeMediaEditor() {
+    setMediaIpEdit(null);
+    setMediaIpDraft(null);
+  }
+
+  function buildMediaPoolPayload(pool: MediaPoolRecord) {
+    const backendNode = backendNodeByName.get(pool.nodeName);
+
+    return {
+      name: pool.name.trim(),
+      assigned_node_id: nodeIdByName.get(pool.nodeName) ?? 0,
+      strategy: pool.strategy,
+      status: pool.status,
+      notes: pool.notes.trim(),
+      assigned_media_ips: pool.mediaIps
+        .map((item) => {
+          const backendIp = backendNode?.ips.find((ip) => ip.ip_address === item.address);
+          if (!backendIp) {
+            return null;
+          }
+
+          return {
+            node_ip_id: backendIp.id,
+            status: item.status,
+            active_calls: item.activeCalls,
+            max_concurrent_calls: item.maxCalls,
+            current_cps: item.currentCps,
+            max_cps: item.maxCps,
+            weight: item.weight,
+            drain_mode: item.drainMode,
+          };
+        })
+        .filter((value): value is NonNullable<typeof value> => value !== null),
+    };
+  }
+
+  async function persistPool(pool: MediaPoolRecord) {
+    const payload = buildMediaPoolPayload(pool);
+    if (!payload.name || !payload.assigned_node_id) {
+      return null;
+    }
+
+    const saved = pool.id ? await updateMediaPool(pool.id, payload) : await createMediaPool(payload);
+    if (!saved) {
+      return null;
+    }
+
+    return mapBackendMediaPoolToFrontend(saved, nodeRecords);
+  }
+
+  async function savePool() {
     if (!draft || !draft.name.trim()) {
       return;
     }
 
     const next = { ...draft, name: draft.name.trim(), notes: draft.notes.trim() };
-    setRecords((current) => (mode === "edit" ? current.map((item) => (item.id === next.id ? next : item)) : [next, ...current]));
+    const saved = await persistPool(next);
+    if (!saved) {
+      return;
+    }
+
+    setRecords((current) => (mode === "edit" ? current.map((item) => (item.id === saved.id ? saved : item)) : [saved, ...current]));
     closeDraft();
   }
 
-  function deletePool(poolId: string) {
+  async function deletePool(poolId: string) {
+    const ok = await deleteMediaPool(poolId);
+    if (!ok) {
+      return;
+    }
+
     setRecords((current) => current.filter((pool) => pool.id !== poolId));
     if (draft?.id === poolId) {
       closeDraft();
     }
   }
 
-  function updatePoolMediaIp(
-    poolId: string,
-    address: string,
-    patch: Partial<MediaPoolRecord["mediaIps"][number]>,
-  ) {
-    setRecords((current) =>
-      current.map((pool) =>
-        pool.id === poolId
-          ? {
-              ...pool,
-              mediaIps: pool.mediaIps.map((item) => (item.address === address ? { ...item, ...patch } : item)),
-            }
-          : pool,
-      ),
-    );
+  async function savePoolMediaIp() {
+    if (!poolForIpEdit || !mediaIpDraft) {
+      return;
+    }
+
+    const nextPool = {
+      ...poolForIpEdit,
+      mediaIps: poolForIpEdit.mediaIps.map((item) => (item.address === mediaIpDraft.address ? mediaIpDraft : item)),
+    };
+    const saved = await persistPool(nextPool);
+    if (!saved) {
+      return;
+    }
+
+    setRecords((current) => current.map((pool) => (pool.id === saved.id ? saved : pool)));
+    closeMediaEditor();
   }
 
-  function removePoolMediaIp(poolId: string, address: string) {
-    setRecords((current) =>
-      current.map((pool) => (pool.id === poolId ? { ...pool, mediaIps: pool.mediaIps.filter((item) => item.address !== address) } : pool)),
-    );
+  async function removePoolMediaIp(poolId: string, address: string) {
+    const targetPool = records.find((pool) => pool.id === poolId);
+    if (!targetPool) {
+      return;
+    }
+
+    const saved = await persistPool({
+      ...targetPool,
+      mediaIps: targetPool.mediaIps.filter((item) => item.address !== address),
+    });
+    if (!saved) {
+      return;
+    }
+
+    setRecords((current) => current.map((pool) => (pool.id === saved.id ? saved : pool)));
   }
 
-  const availableMediaOptions = nodes.flatMap((node) =>
+  const availableMediaOptions = (draft ? nodeRecords.filter((node) => node.name === draft.nodeName) : nodeRecords).flatMap((node) =>
     node.ipPool.filter((ip) => ip.role === "MEDIA").map((ip) => `${node.name} / ${ip.address}`),
   );
 
@@ -96,7 +206,7 @@ export default function MediaPoolsPage() {
         <SectionCard title="Pool List" eyebrow="Current pools" badge={<Badge tone="amber">{records.length} pools</Badge>}>
           <SimpleTable
             columns={["Pool", "Node", "Status", "Active IPs", "Call Capacity", "CPS Capacity", "Actions"]}
-            rows={records.map((pool) => {
+            rows={(isLoading ? [] : records).map((pool) => {
               const stats = getPoolStats(pool);
               return [
                 <div key={`${pool.id}-name`}>
@@ -112,7 +222,7 @@ export default function MediaPoolsPage() {
                   key={`${pool.id}-actions`}
                   actions={[
                     { label: "Edit", onClick: () => openEdit(pool) },
-                    { label: "Delete", tone: "danger", onClick: () => deletePool(pool.id) },
+                    { label: "Delete", tone: "danger", onClick: () => void deletePool(pool.id) },
                   ]}
                 />,
               ];
@@ -170,8 +280,8 @@ export default function MediaPoolsPage() {
                     <ActionsRow
                       key={`${pool.id}-${item.address}-actions`}
                       actions={[
-                        { label: "Edit", onClick: () => setMediaIpEdit({ poolId: pool.id, address: item.address }) },
-                        { label: "Delete", tone: "danger", onClick: () => removePoolMediaIp(pool.id, item.address) },
+                        { label: "Edit", onClick: () => { setMediaIpEdit({ poolId: pool.id, address: item.address }); setMediaIpDraft({ ...item }); } },
+                        { label: "Delete", tone: "danger", onClick: () => void removePoolMediaIp(pool.id, item.address) },
                       ]}
                     />,
                   ])}
@@ -211,9 +321,9 @@ export default function MediaPoolsPage() {
           <div className="flex flex-wrap gap-3">
             <ActionButton tone="muted" onClick={closeDraft}>Cancel</ActionButton>
             {mode === "edit" && draft ? (
-              <ActionButton tone="danger" onClick={() => deletePool(draft.id)}>Delete</ActionButton>
+              <ActionButton tone="danger" onClick={() => void deletePool(draft.id)}>Delete</ActionButton>
             ) : null}
-            <ActionButton tone="primary" onClick={savePool}>{mode === "edit" ? "Update" : "Save"}</ActionButton>
+            <ActionButton tone="primary" onClick={() => void savePool()}>{mode === "edit" ? "Update" : "Save"}</ActionButton>
           </div>
         }
       >
@@ -223,7 +333,7 @@ export default function MediaPoolsPage() {
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="Assigned Node">
                 <select className={inputClassName} value={draft.nodeName} onChange={(event) => setDraft({ ...draft, nodeName: event.target.value })}>
-                  {nodes.map((node) => (
+                  {nodeRecords.map((node) => (
                     <option key={node.id}>{node.name}</option>
                   ))}
                 </select>
@@ -277,25 +387,26 @@ export default function MediaPoolsPage() {
       </OverlayPanel>
 
       <OverlayPanel
-        open={Boolean(selectedMediaIp && mediaIpEdit)}
+        open={Boolean(selectedMediaIp && mediaIpEdit && mediaIpDraft)}
         title="Edit Pool Media IP"
         description="Tune per-IP limits without leaving the pool details view."
-        onClose={() => setMediaIpEdit(null)}
+        onClose={closeMediaEditor}
         footer={
           <div className="flex gap-3">
-            <ActionButton tone="muted" onClick={() => setMediaIpEdit(null)}>Cancel</ActionButton>
+            <ActionButton tone="muted" onClick={closeMediaEditor}>Cancel</ActionButton>
+            <ActionButton tone="primary" onClick={() => void savePoolMediaIp()}>Save</ActionButton>
           </div>
         }
       >
-        {selectedMediaIp && mediaIpEdit ? (
+        {selectedMediaIp && mediaIpEdit && mediaIpDraft ? (
           <div className="space-y-4">
-            <Field label="IP"><input className={inputClassName} value={selectedMediaIp.address} readOnly /></Field>
+            <Field label="IP"><input className={inputClassName} value={mediaIpDraft.address} readOnly /></Field>
             <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="Max Calls"><input className={inputClassName} type="number" value={selectedMediaIp.maxCalls} onChange={(event) => updatePoolMediaIp(mediaIpEdit.poolId, selectedMediaIp.address, { maxCalls: Number(event.target.value) || 30 })} /></Field>
-              <Field label="Max CPS"><input className={inputClassName} type="number" value={selectedMediaIp.maxCps} onChange={(event) => updatePoolMediaIp(mediaIpEdit.poolId, selectedMediaIp.address, { maxCps: Number(event.target.value) || 5 })} /></Field>
-              <Field label="Weight"><input className={inputClassName} type="number" value={selectedMediaIp.weight} onChange={(event) => updatePoolMediaIp(mediaIpEdit.poolId, selectedMediaIp.address, { weight: Number(event.target.value) || 1 })} /></Field>
+              <Field label="Max Calls"><input className={inputClassName} type="number" value={mediaIpDraft.maxCalls} onChange={(event) => setMediaIpDraft({ ...mediaIpDraft, maxCalls: Number(event.target.value) || 30 })} /></Field>
+              <Field label="Max CPS"><input className={inputClassName} type="number" value={mediaIpDraft.maxCps} onChange={(event) => setMediaIpDraft({ ...mediaIpDraft, maxCps: Number(event.target.value) || 5 })} /></Field>
+              <Field label="Weight"><input className={inputClassName} type="number" value={mediaIpDraft.weight} onChange={(event) => setMediaIpDraft({ ...mediaIpDraft, weight: Number(event.target.value) || 1 })} /></Field>
               <Field label="Status">
-                <select className={inputClassName} value={selectedMediaIp.status} onChange={(event) => updatePoolMediaIp(mediaIpEdit.poolId, selectedMediaIp.address, { status: event.target.value as typeof selectedMediaIp.status })}>
+                <select className={inputClassName} value={mediaIpDraft.status} onChange={(event) => setMediaIpDraft({ ...mediaIpDraft, status: event.target.value as typeof mediaIpDraft.status })}>
                   <option>Active</option>
                   <option>Disabled</option>
                   <option>Draining</option>
@@ -303,7 +414,7 @@ export default function MediaPoolsPage() {
               </Field>
             </div>
             <Field label="Drain Mode">
-              <select className={inputClassName} value={selectedMediaIp.drainMode ? "Yes" : "No"} onChange={(event) => updatePoolMediaIp(mediaIpEdit.poolId, selectedMediaIp.address, { drainMode: event.target.value === "Yes" })}>
+              <select className={inputClassName} value={mediaIpDraft.drainMode ? "Yes" : "No"} onChange={(event) => setMediaIpDraft({ ...mediaIpDraft, drainMode: event.target.value === "Yes" })}>
                 <option>No</option>
                 <option>Yes</option>
               </select>

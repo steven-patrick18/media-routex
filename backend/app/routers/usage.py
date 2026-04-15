@@ -3,8 +3,8 @@ import sqlite3
 from fastapi import APIRouter, Depends
 
 from app.dependencies import get_db
-from app.repository import usage_snapshot
 from app.schemas import UsageSnapshot
+from app.services.usage import usage_snapshot
 
 router = APIRouter(prefix="/api/usage", tags=["usage"])
 

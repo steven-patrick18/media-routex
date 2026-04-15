@@ -4,7 +4,8 @@ import { useParams } from "next/navigation";
 import { type ReactNode, useState } from "react";
 import { AppShell } from "@/components/app-shell";
 import { ActionButton, ActionsRow, Badge, OverlayPanel, SectionCard, SimpleTable } from "@/components/panel-primitives";
-import { getNodeById, type MediaIpRecord, type NodePoolIp } from "@/lib/control-panel";
+import { assignNodeIpRole, bulkAssignNodeMedia, scanNodeIpPool, testNodeConnection } from "@/lib/api";
+import { getNodeById, type BackendNodeIp, type MediaIpRecord, type NodePoolIp, type NodeRecord } from "@/lib/control-panel";
 
 type ServiceRecord = {
   name: string;
@@ -29,6 +30,11 @@ export default function NodeDetailsPage() {
   const [activeTab, setActiveTab] = useState<(typeof tabs)[number]>("Overview");
   const [ipDraft, setIpDraft] = useState<NodePoolIp | null>(null);
   const [mediaDraft, setMediaDraft] = useState<MediaIpRecord | null>(null);
+  const [nodeIpIds, setNodeIpIds] = useState<Record<string, number>>({});
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [statusTone, setStatusTone] = useState<"emerald" | "rose" | "amber">("amber");
+  const [bulkSipAddress, setBulkSipAddress] = useState(seedNode.sipIp || "");
+  const numericNodeId = Number((params.nodeId ?? "").replace("node-", ""));
 
   function saveNode() {
     setSavedNode(clone(workingNode));
@@ -65,15 +71,6 @@ export default function NodeDetailsPage() {
     setIpDraft(null);
   }
 
-  function deleteIpRecord(address: string) {
-    setWorkingNode((current) => ({
-      ...current,
-      ipPool: current.ipPool.filter((item) => item.address !== address),
-      sipIp: current.sipIp === address ? "" : current.sipIp,
-      mediaIps: current.mediaIps.filter((item) => item.address !== address),
-    }));
-  }
-
   function upsertMediaIp() {
     if (!mediaDraft || !mediaDraft.address.trim()) {
       return;
@@ -99,6 +96,147 @@ export default function NodeDetailsPage() {
     }));
   }
 
+  async function handleTestConnection() {
+    const response = await testNodeConnection({
+      main_ip: workingNode.mainIp.trim(),
+      ssh_port: workingNode.sshPort,
+      ssh_username: workingNode.sshUsername.trim(),
+      ssh_password: workingNode.sshPassword ?? "",
+    });
+
+    if (!response) {
+      setStatusTone("rose");
+      setStatusMessage("SSH connection test could not reach the backend endpoint.");
+      return;
+    }
+
+    setStatusTone(response.ok ? "emerald" : "rose");
+    setStatusMessage(response.message);
+  }
+
+  async function handleScanIpPool() {
+    if (!numericNodeId) {
+      setStatusTone("amber");
+      setStatusMessage("This node is still using local mock data only, so IP scan cannot be sent to the backend.");
+      return;
+    }
+
+    const response = await scanNodeIpPool(numericNodeId);
+    if (!response) {
+      setStatusTone("rose");
+      setStatusMessage("IP scan failed or did not return a valid node record.");
+      return;
+    }
+
+    hydrateFromBackendNode(response);
+    setStatusTone("emerald");
+    setStatusMessage("IP pool scan completed and discovered addresses were saved.");
+  }
+
+  async function handleAssignRole(address: string, role: "sip" | "media" | "unassign") {
+    const backendIpId = nodeIpIds[address];
+
+    if (numericNodeId && backendIpId) {
+      const response = await assignNodeIpRole(numericNodeId, backendIpId, { role });
+      if (response) {
+        hydrateFromBackendNode(response);
+        setStatusTone("emerald");
+        setStatusMessage(`IP ${address} updated as ${role}.`);
+        return;
+      }
+    }
+
+    applyLocalRole(address, role);
+    setBulkSipAddress(role === "sip" ? address : role === "unassign" && bulkSipAddress === address ? "" : bulkSipAddress);
+    setStatusTone("amber");
+    setStatusMessage(`IP ${address} updated locally as ${role}.`);
+  }
+
+  function applyLocalRole(address: string, role: "sip" | "media" | "unassign") {
+    setWorkingNode((current) => {
+      const nextIpPool: NodePoolIp[] = current.ipPool.map((item) => {
+        if (role === "sip") {
+          if (item.address === address) {
+            return { ...item, role: "SIP", whitelistUse: "Customer + Vendor" };
+          }
+          return item.role === "SIP" ? { ...item, role: "UNASSIGNED", whitelistUse: "Internal only" } : item;
+        }
+        if (item.address === address) {
+          if (role === "media") {
+            return { ...item, role: "MEDIA", whitelistUse: "Internal only" };
+          }
+          return { ...item, role: "UNASSIGNED", whitelistUse: "Internal only" };
+        }
+        return item;
+      });
+
+      const nextSipIp = role === "sip" ? address : current.sipIp === address ? "" : current.sipIp;
+      const nextMediaIps =
+        role === "media"
+          ? current.mediaIps.some((item) => item.address === address)
+            ? current.mediaIps
+            : [...current.mediaIps, makeMediaIp(address)]
+          : current.mediaIps.filter((item) => item.address !== address);
+
+      return { ...current, ipPool: nextIpPool, sipIp: nextSipIp, mediaIps: nextMediaIps };
+    });
+  }
+
+  function hydrateFromBackendNode(node: { ips: BackendNodeIp[]; main_ip?: string; name?: string; status?: string; ssh_port?: number; ssh_username?: string; ssh_password?: string; os_type?: string; purpose?: string; region?: string; notes?: string; sip_ip_id?: number | null }) {
+    const mapped = mapBackendNodeToFrontend(node, workingNode);
+    setNodeIpIds(Object.fromEntries(node.ips.map((item) => [item.ip_address, item.id])));
+    setWorkingNode(mapped);
+    setSavedNode(mapped);
+    setBulkSipAddress(mapped.sipIp || "");
+  }
+
+  async function handleBulkAssignMedia() {
+    if (!bulkSipAddress) {
+      setStatusTone("amber");
+      setStatusMessage("Select one primary SIP IP before bulk assigning media IPs.");
+      return;
+    }
+
+    const sipNodeIpId = nodeIpIds[bulkSipAddress];
+    if (numericNodeId && sipNodeIpId) {
+      const response = await bulkAssignNodeMedia(numericNodeId, { sip_node_ip_id: sipNodeIpId });
+      if (response) {
+        hydrateFromBackendNode(response);
+        setStatusTone("emerald");
+        setStatusMessage("Primary SIP IP updated and all remaining unassigned IPs were assigned as media IPs.");
+        return;
+      }
+    }
+
+    setWorkingNode((current) => {
+      const nextIpPool: NodePoolIp[] = current.ipPool.map((item) => {
+        if (item.address === bulkSipAddress) {
+          return { ...item, role: "SIP", whitelistUse: "Customer + Vendor" };
+        }
+        if (item.role === "SIP") {
+          return { ...item, role: "UNASSIGNED", whitelistUse: "Internal only" };
+        }
+        if (item.role === "UNASSIGNED") {
+          return { ...item, role: "MEDIA", whitelistUse: "Internal only" };
+        }
+        return item;
+      });
+
+      const mediaAddresses = nextIpPool.filter((item) => item.role === "MEDIA").map((item) => item.address);
+      const nextMediaIps = mediaAddresses.map((address) => current.mediaIps.find((item) => item.address === address) ?? makeMediaIp(address));
+
+      const nextNode = { ...current, sipIp: bulkSipAddress, ipPool: nextIpPool, mediaIps: nextMediaIps };
+      setSavedNode(nextNode);
+      return nextNode;
+    });
+    setStatusTone("amber");
+    setStatusMessage("Primary SIP IP updated and remaining unassigned IPs were assigned locally as media IPs.");
+  }
+
+  const totalIpCount = workingNode.ipPool.length;
+  const selectedSipCount = workingNode.sipIp ? 1 : 0;
+  const totalMediaIpCount = workingNode.ipPool.filter((item) => item.role === "MEDIA").length;
+
   const selectedTab = {
     Overview: (
       <SectionCard title="Overview" eyebrow="Editable node summary" badge={<Badge tone="emerald">{workingNode.status}</Badge>}>
@@ -108,7 +246,7 @@ export default function NodeDetailsPage() {
           <Field label="SSH Port"><input className={inputClassName} type="number" value={workingNode.sshPort} onChange={(event) => setWorkingNode({ ...workingNode, sshPort: Number(event.target.value) || 22 })} /></Field>
           <Field label="SSH Username"><input className={inputClassName} value={workingNode.sshUsername} onChange={(event) => setWorkingNode({ ...workingNode, sshUsername: event.target.value })} /></Field>
           <Field label="OS Type"><input className={inputClassName} value={workingNode.osType} onChange={(event) => setWorkingNode({ ...workingNode, osType: event.target.value })} /></Field>
-          <Field label="Purpose">
+          <Field label="Traffic Role">
             <select className={inputClassName} value={workingNode.purpose} onChange={(event) => setWorkingNode({ ...workingNode, purpose: event.target.value as typeof workingNode.purpose })}>
               <option>MONITORING</option>
               <option>SIP + MEDIA</option>
@@ -126,6 +264,15 @@ export default function NodeDetailsPage() {
         </div>
         <div className="mt-4">
           <Field label="Notes"><textarea className={textareaClassName} rows={4} value={workingNode.notes} onChange={(event) => setWorkingNode({ ...workingNode, notes: event.target.value })} /></Field>
+        </div>
+        {statusMessage ? (
+          <div className="mt-4 flex items-center gap-3 rounded-2xl border border-white/8 bg-slate-950/40 px-4 py-3">
+            <Badge tone={statusTone}>{statusTone === "emerald" ? "Success" : statusTone === "rose" ? "Error" : "Status"}</Badge>
+            <p className="text-sm text-slate-200">{statusMessage}</p>
+          </div>
+        ) : null}
+        <div className="mt-4">
+          <ActionButton tone="emerald" onClick={handleTestConnection}>Test Connection</ActionButton>
         </div>
         <SaveBar onCancel={cancelNode} onSave={saveNode} />
       </SectionCard>
@@ -171,20 +318,59 @@ export default function NodeDetailsPage() {
         title="IP Pool"
         eyebrow="Editable IP records"
         badge={<Badge tone="cyan">{workingNode.ipPool.length} IPs</Badge>}
-        action={<ActionButton tone="primary" onClick={() => setIpDraft({ address: "", role: "MEDIA", status: "Active", whitelistUse: "Internal only" })}>Add IP</ActionButton>}
+        action={
+          <div className="flex flex-wrap gap-2">
+            <ActionButton tone="emerald" onClick={handleScanIpPool}>Scan IP Pool</ActionButton>
+            <ActionButton tone="primary" onClick={() => setIpDraft({ address: "", role: "UNASSIGNED", status: "Active", whitelistUse: "Internal only", interfaceName: "" })}>Add IP</ActionButton>
+          </div>
+        }
       >
+        <div className="mb-5 grid gap-4 xl:grid-cols-[repeat(3,minmax(0,1fr))_minmax(0,1.3fr)]">
+          {[
+            ["Total IPs", `${totalIpCount}`],
+            ["SIP IP Selected", `${selectedSipCount}`],
+            ["Total Media IPs", `${totalMediaIpCount}`],
+          ].map(([label, value]) => (
+            <div key={label} className="rounded-2xl border border-white/8 bg-slate-950/40 px-4 py-4">
+              <p className="font-mono text-[0.62rem] uppercase tracking-[0.26em] text-slate-500">{label}</p>
+              <p className="mt-3 text-2xl font-semibold uppercase tracking-[0.08em] text-white">{value}</p>
+            </div>
+          ))}
+          <div className="rounded-2xl border border-white/8 bg-slate-950/40 px-4 py-4">
+            <p className="font-mono text-[0.62rem] uppercase tracking-[0.26em] text-slate-500">Bulk Assignment</p>
+            <div className="mt-3 flex flex-wrap gap-3">
+              <select
+                className="min-w-[220px] flex-1 rounded-2xl border border-white/10 bg-slate-950/55 px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-300/70"
+                value={bulkSipAddress}
+                onChange={(event) => setBulkSipAddress(event.target.value)}
+              >
+                <option value="">Select primary SIP IP</option>
+                {workingNode.ipPool
+                  .filter((item) => item.role !== "MAIN")
+                  .map((item) => (
+                    <option key={item.address} value={item.address}>
+                      {item.address} / {item.interfaceName ?? "-"}
+                    </option>
+                  ))}
+              </select>
+              <ActionButton tone="primary" onClick={handleBulkAssignMedia}>Assign Remaining as Media</ActionButton>
+            </div>
+            <p className="mt-3 text-xs leading-6 text-slate-400">Changing the SIP IP automatically unassigns the old SIP IP. All remaining unassigned IPs become media IPs in one action.</p>
+          </div>
+        </div>
         <SimpleTable
-          columns={["IP Address", "Role", "Status", "Whitelist Use", "Actions"]}
+          columns={["IP Address", "Interface", "Status", "Role", "Action"]}
           rows={workingNode.ipPool.map((ip) => [
             ip.address,
-            ip.role,
+            ip.interfaceName ?? "-",
             ip.status,
-            ip.whitelistUse,
+            ip.role,
             <ActionsRow
               key={`${ip.address}-actions`}
               actions={[
-                { label: "Edit", onClick: () => setIpDraft({ ...ip }) },
-                { label: "Delete", tone: "danger", onClick: () => deleteIpRecord(ip.address) },
+                { label: "Set as SIP IP", onClick: () => handleAssignRole(ip.address, "sip") },
+                { label: "Set as Media IP", onClick: () => handleAssignRole(ip.address, "media") },
+                { label: "Unassign", tone: "danger", onClick: () => handleAssignRole(ip.address, "unassign") },
               ]}
             />,
           ])}
@@ -328,7 +514,11 @@ export default function NodeDetailsPage() {
                 <option>MAIN</option>
                 <option>SIP</option>
                 <option>MEDIA</option>
+                <option>UNASSIGNED</option>
               </select>
+            </Field>
+            <Field label="Interface">
+              <input className={inputClassName} value={ipDraft.interfaceName ?? ""} onChange={(event) => setIpDraft({ ...ipDraft, interfaceName: event.target.value })} />
             </Field>
             <Field label="Status">
               <select className={inputClassName} value={ipDraft.status} onChange={(event) => setIpDraft({ ...ipDraft, status: event.target.value as NodePoolIp["status"] })}>
@@ -425,6 +615,46 @@ function makeMediaIp(address: string): MediaIpRecord {
     maxCps: 5,
     weight: 1,
     drainMode: false,
+  };
+}
+
+function mapBackendNodeToFrontend(node: { ips: BackendNodeIp[]; main_ip?: string; name?: string; status?: string; ssh_port?: number; ssh_username?: string; ssh_password?: string; os_type?: string; purpose?: string; region?: string; notes?: string; sip_ip_id?: number | null }, fallback: NodeRecord): NodeRecord {
+  const sipIpAddress = node.ips.find((item) => item.id === node.sip_ip_id)?.ip_address ?? fallback.sipIp;
+  const mappedIpPool: NodePoolIp[] = node.ips.map((item) => ({
+    address: item.ip_address,
+    interfaceName: item.interface_name ?? "",
+    role: item.ip_role === "main" ? "MAIN" : item.ip_role === "sip" ? "SIP" : item.ip_role === "media" ? "MEDIA" : "UNASSIGNED",
+    status: item.status === "disabled" ? "Disabled" : item.status === "reserved" ? "Reserved" : "Active",
+    whitelistUse: item.ip_role === "sip" ? "Customer + Vendor" : "Internal only",
+  }));
+  const mappedMediaIps: MediaIpRecord[] = node.ips
+    .filter((item) => item.ip_role === "media")
+    .map((item) => ({
+      address: item.ip_address,
+      status: item.status === "disabled" ? "Disabled" : item.status === "draining" ? "Draining" : "Active",
+      activeCalls: item.active_calls,
+      maxCalls: item.max_concurrent_calls,
+      currentCps: item.current_cps,
+      maxCps: item.max_cps,
+      weight: item.weight,
+      drainMode: item.drain_mode,
+    }));
+
+  return {
+    ...fallback,
+    name: node.name ?? fallback.name,
+    mainIp: node.main_ip ?? fallback.mainIp,
+    sshPort: node.ssh_port ?? fallback.sshPort,
+    sshUsername: node.ssh_username ?? fallback.sshUsername,
+    sshPassword: node.ssh_password ?? fallback.sshPassword,
+    osType: node.os_type ?? fallback.osType,
+    purpose: (node.purpose as NodeRecord["purpose"]) ?? fallback.purpose,
+    region: node.region ?? fallback.region,
+    notes: node.notes ?? fallback.notes,
+    status: (node.status as NodeRecord["status"]) ?? fallback.status,
+    sipIp: sipIpAddress,
+    ipPool: mappedIpPool,
+    mediaIps: mappedMediaIps,
   };
 }
 

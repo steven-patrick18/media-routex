@@ -1,9 +1,10 @@
 "use client";
 
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { AppShell } from "@/components/app-shell";
 import { ActionButton, ActionsRow, Badge, OverlayPanel, SectionCard, SimpleTable } from "@/components/panel-primitives";
-import { nodes as seedNodes, type NodeRecord } from "@/lib/control-panel";
+import { createNode, deleteNode, listNodes, mapBackendNodeToFrontend, testNodeConnection, updateNode } from "@/lib/api";
+import type { NodeRecord } from "@/lib/control-panel";
 
 const emptyNode = (): NodeRecord => ({
   id: `node-${Date.now()}`,
@@ -11,6 +12,7 @@ const emptyNode = (): NodeRecord => ({
   mainIp: "",
   sshPort: 22,
   sshUsername: "",
+  sshPassword: "",
   osType: "",
   purpose: "MONITORING",
   region: "",
@@ -25,40 +27,121 @@ const emptyNode = (): NodeRecord => ({
 });
 
 export default function NodesPage() {
-  const [records, setRecords] = useState(seedNodes);
+  const [records, setRecords] = useState<NodeRecord[]>([]);
   const [draft, setDraft] = useState<NodeRecord | null>(null);
   const [mode, setMode] = useState<"add" | "edit" | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
+  const [connectionMessage, setConnectionMessage] = useState<string | null>(null);
+  const [connectionTone, setConnectionTone] = useState<"emerald" | "rose" | "amber">("amber");
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function load() {
+      setIsLoading(true);
+      const response = await listNodes();
+      if (!cancelled) {
+        setRecords(response ?? []);
+        setIsLoading(false);
+      }
+    }
+
+    void load();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   function openAdd() {
     setMode("add");
     setDraft(emptyNode());
+    setShowPassword(false);
+    setConnectionMessage(null);
   }
 
   function openEdit(node: NodeRecord) {
     setMode("edit");
-    setDraft({ ...node, ipPool: node.ipPool.map((item) => ({ ...item })), mediaIps: node.mediaIps.map((item) => ({ ...item })) });
+    setDraft({
+      ...node,
+      sshPassword: node.sshPassword ?? "",
+      ipPool: node.ipPool.map((item) => ({ ...item })),
+      mediaIps: node.mediaIps.map((item) => ({ ...item })),
+    });
+    setShowPassword(false);
+    setConnectionMessage(null);
   }
 
   function closePanel() {
     setMode(null);
     setDraft(null);
+    setShowPassword(false);
+    setConnectionMessage(null);
   }
 
-  function saveDraft() {
+  async function saveDraft() {
     if (!draft || !draft.name.trim() || !draft.mainIp.trim()) {
       return;
     }
 
     const next = { ...draft, name: draft.name.trim(), mainIp: draft.mainIp.trim(), notes: draft.notes.trim() };
-    setRecords((current) => (mode === "edit" ? current.map((item) => (item.id === next.id ? next : item)) : [next, ...current]));
+    const payload = {
+      name: next.name,
+      main_ip: next.mainIp,
+      ssh_port: next.sshPort,
+      ssh_username: next.sshUsername,
+      ssh_password: next.sshPassword ?? "",
+      os_type: next.osType,
+      purpose: next.purpose,
+      region: next.region,
+      notes: next.notes,
+      status: next.status,
+      sip_ip_id: null,
+    };
+
+    const saved = mode === "edit" && next.id ? await updateNode(next.id, payload) : await createNode(payload);
+    if (!saved) {
+      return;
+    }
+
+    const mapped = mapBackendNodeToFrontend(saved, next);
+    setRecords((current) => (mode === "edit" ? current.map((item) => (item.id === mapped.id ? mapped : item)) : [mapped, ...current]));
     closePanel();
   }
 
-  function removeNode(nodeId: string) {
+  async function removeNode(nodeId: string) {
+    const ok = await deleteNode(nodeId);
+    if (!ok) {
+      return;
+    }
+
     setRecords((current) => current.filter((node) => node.id !== nodeId));
     if (draft?.id === nodeId) {
       closePanel();
     }
+  }
+
+  async function handleTestConnection() {
+    if (!draft) {
+      return;
+    }
+
+    const response = await testNodeConnection({
+      main_ip: draft.mainIp.trim(),
+      ssh_port: draft.sshPort,
+      ssh_username: draft.sshUsername.trim(),
+      ssh_password: draft.sshPassword ?? "",
+    });
+
+    if (!response) {
+      setConnectionTone("rose");
+      setConnectionMessage("SSH connection test could not reach the backend endpoint.");
+      return;
+    }
+
+    setConnectionTone(response.ok ? "emerald" : "rose");
+    setConnectionMessage(response.message);
   }
 
   return (
@@ -72,8 +155,8 @@ export default function NodesPage() {
       <section className="grid gap-6 xl:grid-cols-[minmax(0,1.2fr)_320px]">
         <SectionCard title="Node Inventory" eyebrow="Server registry" badge={<Badge tone="emerald">{records.length} nodes</Badge>}>
           <SimpleTable
-            columns={["Node", "SIP IP", "Purpose", "Region", "Media IPs", "Actions"]}
-            rows={records.map((node) => [
+            columns={["Node", "SIP IP", "Traffic Role", "Region", "Media IPs", "Actions"]}
+            rows={(isLoading ? [] : records).map((node) => [
               <div key={`${node.id}-name`}>
                 <p className="font-semibold uppercase tracking-[0.08em] text-white">{node.name}</p>
                 <p className="mt-1 text-xs uppercase tracking-[0.12em] text-slate-500">{node.mainIp}</p>
@@ -87,7 +170,7 @@ export default function NodesPage() {
                 actions={[
                   { label: "View", href: `/nodes/${node.id}` },
                   { label: "Edit", onClick: () => openEdit(node) },
-                  { label: "Delete", tone: "danger", onClick: () => removeNode(node.id) },
+                  { label: "Delete", tone: "danger", onClick: () => void removeNode(node.id) },
                 ]}
               />,
             ])}
@@ -112,9 +195,9 @@ export default function NodesPage() {
           <div className="flex flex-wrap gap-3">
             <ActionButton tone="muted" onClick={closePanel}>Cancel</ActionButton>
             {mode === "edit" && draft ? (
-              <ActionButton tone="danger" onClick={() => removeNode(draft.id)}>Delete</ActionButton>
+              <ActionButton tone="danger" onClick={() => void removeNode(draft.id)}>Delete</ActionButton>
             ) : null}
-            <ActionButton tone="primary" onClick={saveDraft}>{mode === "edit" ? "Update" : "Save"}</ActionButton>
+            <ActionButton tone="primary" onClick={() => void saveDraft()}>{mode === "edit" ? "Update" : "Save"}</ActionButton>
           </div>
         }
       >
@@ -135,12 +218,30 @@ export default function NodesPage() {
               <Field label="SSH Username">
                 <input className={inputClassName} value={draft.sshUsername} onChange={(event) => setDraft({ ...draft, sshUsername: event.target.value })} placeholder="noc-admin" />
               </Field>
-              <Field label="OS Type">
-                <input className={inputClassName} value={draft.osType} onChange={(event) => setDraft({ ...draft, osType: event.target.value })} placeholder="Ubuntu 24.04" />
+              <Field label="SSH Password">
+                <div className="flex gap-3">
+                  <input
+                    className="min-w-0 flex-1 rounded-2xl border border-white/10 bg-slate-950/55 px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-300/70"
+                    type={showPassword ? "text" : "password"}
+                    value={draft.sshPassword ?? ""}
+                    onChange={(event) => setDraft({ ...draft, sshPassword: event.target.value })}
+                    placeholder="Enter SSH password"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((current) => !current)}
+                    className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-xs font-semibold uppercase tracking-[0.16em] text-slate-100 transition hover:bg-white/[0.08]"
+                  >
+                    {showPassword ? "Hide" : "Show"}
+                  </button>
+                </div>
               </Field>
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="Purpose">
+              <Field label="OS Type">
+                <input className={inputClassName} value={draft.osType} onChange={(event) => setDraft({ ...draft, osType: event.target.value })} placeholder="Ubuntu 24.04" />
+              </Field>
+              <Field label="Traffic Role">
                 <select className={inputClassName} value={draft.purpose} onChange={(event) => setDraft({ ...draft, purpose: event.target.value as NodeRecord["purpose"] })}>
                   <option>MONITORING</option>
                   <option>SIP + MEDIA</option>
@@ -154,6 +255,15 @@ export default function NodesPage() {
             <Field label="Notes">
               <textarea className={textareaClassName} rows={4} value={draft.notes} onChange={(event) => setDraft({ ...draft, notes: event.target.value })} placeholder="Node purpose and operator notes" />
             </Field>
+            {connectionMessage ? (
+              <div className="flex items-center gap-3 rounded-2xl border border-white/8 bg-slate-950/40 px-4 py-3">
+                <Badge tone={connectionTone}>{connectionTone === "emerald" ? "Success" : "Error"}</Badge>
+                <p className="text-sm text-slate-200">{connectionMessage}</p>
+              </div>
+            ) : null}
+            <div className="flex flex-wrap gap-3">
+              <ActionButton tone="emerald" onClick={handleTestConnection}>Test Connection</ActionButton>
+            </div>
           </div>
         ) : null}
       </OverlayPanel>

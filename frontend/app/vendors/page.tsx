@@ -1,12 +1,13 @@
 "use client";
 
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/app-shell";
 import { ActionButton, ActionsRow, Badge, OverlayPanel, SectionCard, SimpleTable } from "@/components/panel-primitives";
-import { getBalancedStrategyRules, mediaPools, nodes, vendors as seedVendors, type VendorRecord } from "@/lib/control-panel";
+import { createVendor, deleteVendor, listMediaPoolsRaw, listNodes, listVendorsRaw, mapBackendMediaPoolToFrontend, mapBackendVendorToFrontend, updateVendor } from "@/lib/api";
+import { getBalancedStrategyRules, type MediaPoolRecord, type NodeRecord, type VendorRecord } from "@/lib/control-panel";
 
 const emptyVendor = (): VendorRecord => ({
-  id: `vendor-${Date.now()}`,
+  id: "",
   name: "",
   sipHost: "",
   sipPort: 5060,
@@ -18,9 +19,41 @@ const emptyVendor = (): VendorRecord => ({
 });
 
 export default function VendorsPage() {
-  const [records, setRecords] = useState(seedVendors);
+  const [records, setRecords] = useState<VendorRecord[]>([]);
+  const [nodeRecords, setNodeRecords] = useState<NodeRecord[]>([]);
+  const [mediaPoolRecords, setMediaPoolRecords] = useState<MediaPoolRecord[]>([]);
   const [draft, setDraft] = useState<VendorRecord | null>(null);
   const [mode, setMode] = useState<"add" | "edit" | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function load() {
+      setIsLoading(true);
+      const [backendNodes, backendPools, backendVendors] = await Promise.all([listNodes(), listMediaPoolsRaw(), listVendorsRaw()]);
+      if (cancelled) {
+        return;
+      }
+
+      const safeNodes = backendNodes ?? [];
+      const safePools = (backendPools ?? []).map((pool) => mapBackendMediaPoolToFrontend(pool, safeNodes));
+
+      setNodeRecords(safeNodes);
+      setMediaPoolRecords(safePools);
+      setRecords((backendVendors ?? []).map((vendor) => mapBackendVendorToFrontend(vendor, safeNodes, safePools)));
+      setIsLoading(false);
+    }
+
+    void load();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const nodeIdByName = useMemo(() => new Map(nodeRecords.map((node) => [node.name, Number(node.id)])), [nodeRecords]);
+  const mediaPoolIdByName = useMemo(() => new Map(mediaPoolRecords.map((pool) => [pool.name, Number(pool.id)])), [mediaPoolRecords]);
 
   function openAdd() {
     setMode("add");
@@ -37,17 +70,43 @@ export default function VendorsPage() {
     setDraft(null);
   }
 
-  function saveDraft() {
+  async function saveDraft() {
     if (!draft || !draft.name.trim() || !draft.sipHost.trim()) {
       return;
     }
 
     const next = { ...draft, name: draft.name.trim(), sipHost: draft.sipHost.trim(), notes: draft.notes.trim() };
-    setRecords((current) => (mode === "edit" ? current.map((item) => (item.id === next.id ? next : item)) : [next, ...current]));
+    const payload = {
+      name: next.name,
+      sip_host: next.sipHost,
+      sip_port: next.sipPort,
+      status: next.status,
+      notes: next.notes,
+      allowed_sip_node_ids: next.allowedSipNodes
+        .map((nodeName) => nodeIdByName.get(nodeName))
+        .filter((value): value is number => typeof value === "number"),
+      media_selection_strategy: next.strategy,
+      media_pool_ids: next.mediaPools
+        .map((poolName) => mediaPoolIdByName.get(poolName))
+        .filter((value): value is number => typeof value === "number"),
+    };
+
+    const saved = mode === "edit" && next.id ? await updateVendor(next.id, payload) : await createVendor(payload);
+    if (!saved) {
+      return;
+    }
+
+    const mapped = mapBackendVendorToFrontend(saved, nodeRecords, mediaPoolRecords);
+    setRecords((current) => (mode === "edit" ? current.map((item) => (item.id === mapped.id ? mapped : item)) : [mapped, ...current]));
     closePanel();
   }
 
-  function removeVendor(vendorId: string) {
+  async function removeVendor(vendorId: string) {
+    const ok = await deleteVendor(vendorId);
+    if (!ok) {
+      return;
+    }
+
     setRecords((current) => current.filter((vendor) => vendor.id !== vendorId));
     if (draft?.id === vendorId) {
       closePanel();
@@ -66,7 +125,7 @@ export default function VendorsPage() {
         <SectionCard title="Vendor List" eyebrow="Current vendors" badge={<Badge tone="violet">{records.length} vendors</Badge>}>
           <SimpleTable
             columns={["Vendor", "Vendor Target", "Allowed SIP Nodes", "Media Pools", "Actions"]}
-            rows={records.map((vendor) => [
+            rows={(isLoading ? [] : records).map((vendor) => [
               <div key={`${vendor.id}-name`}>
                 <p className="font-semibold uppercase tracking-[0.08em] text-white">{vendor.name}</p>
                 <p className="mt-1 text-xs text-slate-500">{vendor.notes}</p>
@@ -74,7 +133,7 @@ export default function VendorsPage() {
               `${vendor.sipHost}:${vendor.sipPort}`,
               <div key={`${vendor.id}-nodes`} className="space-y-1">
                 {vendor.allowedSipNodes.map((nodeName) => {
-                  const sipIp = nodes.find((node) => node.name === nodeName)?.sipIp ?? "";
+                  const sipIp = nodeRecords.find((node) => node.name === nodeName)?.sipIp ?? "";
                   return (
                     <p key={nodeName} className="text-xs text-slate-300">
                       {nodeName} / {sipIp}
@@ -88,7 +147,7 @@ export default function VendorsPage() {
                 actions={[
                   { label: "View", href: `/vendors/${vendor.id}` },
                   { label: "Edit", onClick: () => openEdit(vendor) },
-                  { label: "Delete", tone: "danger", onClick: () => removeVendor(vendor.id) },
+                  { label: "Delete", tone: "danger", onClick: () => void removeVendor(vendor.id) },
                 ]}
               />,
             ])}
@@ -118,7 +177,7 @@ export default function VendorsPage() {
         <SectionCard title="Change Coverage" eyebrow="Editable fields" badge={<Badge tone="emerald">Full flow</Badge>}>
           <div className="space-y-3 text-sm leading-7 text-slate-300">
             <p>Edit SIP host, SIP port, notes, status, strategy, SIP nodes, and media pool assignments.</p>
-            <p>Delete removes the vendor from the local state immediately.</p>
+            <p>Delete removes the vendor from persistent storage and the refreshed list reflects it immediately.</p>
             <p>Save and cancel work from the same lightweight edit drawer.</p>
           </div>
         </SectionCard>
@@ -133,9 +192,9 @@ export default function VendorsPage() {
           <div className="flex flex-wrap gap-3">
             <ActionButton tone="muted" onClick={closePanel}>Cancel</ActionButton>
             {mode === "edit" && draft ? (
-              <ActionButton tone="danger" onClick={() => removeVendor(draft.id)}>Delete</ActionButton>
+              <ActionButton tone="danger" onClick={() => void removeVendor(draft.id)}>Delete</ActionButton>
             ) : null}
-            <ActionButton tone="primary" onClick={saveDraft}>{mode === "edit" ? "Update" : "Save"}</ActionButton>
+            <ActionButton tone="primary" onClick={() => void saveDraft()}>{mode === "edit" ? "Update" : "Save"}</ActionButton>
           </div>
         }
       >
@@ -175,7 +234,7 @@ export default function VendorsPage() {
                 value={draft.allowedSipNodes}
                 onChange={(event) => setDraft({ ...draft, allowedSipNodes: Array.from(event.target.selectedOptions, (option) => option.value) })}
               >
-                {nodes.map((node) => (
+                {nodeRecords.map((node) => (
                   <option key={node.id} value={node.name}>
                     {node.name} / {node.sipIp}
                   </option>
@@ -189,7 +248,7 @@ export default function VendorsPage() {
                 value={draft.mediaPools}
                 onChange={(event) => setDraft({ ...draft, mediaPools: Array.from(event.target.selectedOptions, (option) => option.value) })}
               >
-                {mediaPools.map((pool) => (
+                {mediaPoolRecords.map((pool) => (
                   <option key={pool.id} value={pool.name}>
                     {pool.name}
                   </option>

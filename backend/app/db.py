@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import sqlite3
-from pathlib import Path
 
-DB_PATH = Path(__file__).resolve().parents[1] / "mediaroutex.db"
+from app.config import DB_PATH
 
 
 def get_connection() -> sqlite3.Connection:
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(DB_PATH)
     connection.row_factory = sqlite3.Row
     return connection
@@ -77,6 +77,7 @@ def init_db() -> None:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 node_id INTEGER NOT NULL,
                 ip_address TEXT NOT NULL,
+                interface_name TEXT,
                 ip_role TEXT NOT NULL DEFAULT 'pool',
                 status TEXT NOT NULL DEFAULT 'active',
                 active_calls INTEGER NOT NULL DEFAULT 0,
@@ -131,11 +132,24 @@ def init_db() -> None:
                 user TEXT NOT NULL,
                 level TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS settings (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                selection_strategy TEXT NOT NULL DEFAULT 'Balanced',
+                default_max_calls INTEGER NOT NULL DEFAULT 30,
+                default_max_cps INTEGER NOT NULL DEFAULT 5,
+                source_identity_rule TEXT NOT NULL DEFAULT 'Source dialer IP only',
+                customer_pool_rule TEXT NOT NULL DEFAULT 'Customers do not receive media pools directly',
+                sip_whitelist_rule TEXT NOT NULL DEFAULT 'Customers and vendors whitelist the selected node SIP IP',
+                notes TEXT NOT NULL DEFAULT ''
+            );
             """
         )
         _ensure_column(cursor, "nodes", "sip_ip_id", "INTEGER")
+        _ensure_column(cursor, "node_ips", "interface_name", "TEXT")
         connection.commit()
         seed_db(connection)
+        ensure_settings_row(connection)
 
 
 def seed_db(connection: sqlite3.Connection) -> None:
@@ -280,6 +294,36 @@ def seed_db(connection: sqlite3.Connection) -> None:
     )
 
     connection.commit()
+
+
+def ensure_settings_row(connection: sqlite3.Connection) -> None:
+    existing = connection.execute("SELECT id FROM settings WHERE id = 1").fetchone()
+    if existing is None:
+        connection.execute(
+            """
+            INSERT INTO settings (
+                id,
+                selection_strategy,
+                default_max_calls,
+                default_max_cps,
+                source_identity_rule,
+                customer_pool_rule,
+                sip_whitelist_rule,
+                notes
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                1,
+                "Balanced",
+                30,
+                5,
+                "Source dialer IP only",
+                "Customers do not receive media pools directly",
+                "Customers and vendors whitelist the selected node SIP IP",
+                "No prefix matching, no real SIP or RTP engine, and no SSH scan automation in this phase.",
+            ),
+        )
+        connection.commit()
 
 
 def _ensure_column(cursor: sqlite3.Cursor, table_name: str, column_name: str, definition: str) -> None:

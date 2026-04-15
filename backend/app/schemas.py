@@ -51,6 +51,7 @@ class NodeBase(BaseModel):
 class NodeIp(BaseModel):
     id: int
     ip_address: str
+    interface_name: str | None = None
     ip_role: str
     status: str
     active_calls: int
@@ -66,13 +67,44 @@ class Node(NodeBase):
     ips: list[NodeIp] = Field(default_factory=list)
 
 
+class NodeConnectionTestRequest(BaseModel):
+    main_ip: str
+    ssh_port: int
+    ssh_username: str
+    ssh_password: str
+
+
+class NodeConnectionTestResponse(BaseModel):
+    ok: bool
+    message: str
+
+
+class NodeIpAssignmentRequest(BaseModel):
+    role: Literal["sip", "media", "unassign"]
+
+
+class NodeBulkMediaAssignmentRequest(BaseModel):
+    sip_node_ip_id: int
+
+
+class MediaPoolIpConfig(BaseModel):
+    node_ip_id: int
+    status: str = "Active"
+    active_calls: int = 0
+    max_concurrent_calls: int = 30
+    current_cps: int = 0
+    max_cps: int = 5
+    weight: int = 1
+    drain_mode: bool = False
+
+
 class MediaPoolBase(BaseModel):
     name: str
     assigned_node_id: int
     strategy: str = "Balanced"
     status: str = "Active"
     notes: str = ""
-    assigned_media_ip_ids: list[int] = Field(default_factory=list)
+    assigned_media_ips: list[MediaPoolIpConfig] = Field(default_factory=list)
 
 
 class MediaPoolIp(BaseModel):
@@ -90,6 +122,7 @@ class MediaPoolIp(BaseModel):
 
 class MediaPool(MediaPoolBase):
     id: int
+    assigned_media_ip_ids: list[int] = Field(default_factory=list)
     assigned_vendors: list[int] = Field(default_factory=list)
     media_ips: list[MediaPoolIp] = Field(default_factory=list)
 
@@ -131,3 +164,13 @@ class SessionResponse(BaseModel):
     authenticated: bool
     user: str
     role: str
+
+
+class Settings(BaseModel):
+    selection_strategy: str = "Balanced"
+    default_max_calls: int = 30
+    default_max_cps: int = 5
+    source_identity_rule: str = "Source dialer IP only"
+    customer_pool_rule: str = "Customers do not receive media pools directly"
+    sip_whitelist_rule: str = "Customers and vendors whitelist the selected node SIP IP"
+    notes: str = ""

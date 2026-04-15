@@ -3,8 +3,19 @@ import sqlite3
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.dependencies import get_db
-from app.repository import create_node, delete_node, get_node, list_nodes, update_node
-from app.schemas import Node, NodeBase
+from app.schemas import Node, NodeBase, NodeBulkMediaAssignmentRequest, NodeConnectionTestRequest, NodeConnectionTestResponse, NodeIpAssignmentRequest
+from app.services.ssh_service import SshServiceError
+from app.services.nodes import (
+    create_node,
+    delete_node,
+    get_node,
+    list_nodes,
+    scan_node_ip_pool,
+    test_node_connection,
+    bulk_assign_node_media_ips,
+    update_node,
+    update_node_ip_role,
+)
 
 router = APIRouter(prefix="/api/nodes", tags=["nodes"])
 
@@ -39,3 +50,45 @@ def update_node_record(node_id: int, payload: NodeBase, connection: sqlite3.Conn
 def delete_node_record(node_id: int, connection: sqlite3.Connection = Depends(get_db)) -> dict[str, bool]:
     delete_node(connection, node_id)
     return {"ok": True}
+
+
+@router.post("/test-ssh", response_model=NodeConnectionTestResponse)
+def test_node_connection_record(payload: NodeConnectionTestRequest) -> NodeConnectionTestResponse:
+    return test_node_connection(payload)
+
+
+@router.post("/{node_id}/scan-ip-pool", response_model=Node)
+def scan_node_ip_pool_record(node_id: int, connection: sqlite3.Connection = Depends(get_db)) -> Node:
+    try:
+        return scan_node_ip_pool(connection, node_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Node not found") from exc
+    except SshServiceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.patch("/{node_id}/ips/{node_ip_id}", response_model=Node)
+def update_node_ip_role_record(
+    node_id: int,
+    node_ip_id: int,
+    payload: NodeIpAssignmentRequest,
+    connection: sqlite3.Connection = Depends(get_db),
+) -> Node:
+    try:
+        return update_node_ip_role(connection, node_id, node_ip_id, payload.role)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Node not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/{node_id}/bulk-assign-media", response_model=Node)
+def bulk_assign_media_record(
+    node_id: int,
+    payload: NodeBulkMediaAssignmentRequest,
+    connection: sqlite3.Connection = Depends(get_db),
+) -> Node:
+    try:
+        return bulk_assign_node_media_ips(connection, node_id, payload.sip_node_ip_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Node not found") from exc

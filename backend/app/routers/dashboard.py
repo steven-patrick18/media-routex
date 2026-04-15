@@ -3,8 +3,8 @@ import sqlite3
 from fastapi import APIRouter, Depends
 
 from app.dependencies import get_db
-from app.repository import dashboard_summary
 from app.schemas import DashboardSummary
+from app.services.dashboard import dashboard_summary
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 

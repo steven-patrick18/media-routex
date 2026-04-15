@@ -1,12 +1,13 @@
 "use client";
 
-import { type ReactNode, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/app-shell";
 import { ActionButton, ActionsRow, Badge, OverlayPanel, SectionCard, SimpleTable } from "@/components/panel-primitives";
-import { customers as seedCustomers, nodes, type CustomerRecord } from "@/lib/control-panel";
+import { createCustomer, deleteCustomer, listCustomersRaw, listNodes, mapBackendCustomerToFrontend, updateCustomer } from "@/lib/api";
+import type { CustomerRecord, NodeRecord } from "@/lib/control-panel";
 
 const emptyCustomer = (): CustomerRecord => ({
-  id: `cust-${Date.now()}`,
+  id: "",
   name: "",
   status: "Draft",
   notes: "",
@@ -15,11 +16,37 @@ const emptyCustomer = (): CustomerRecord => ({
 });
 
 export default function CustomersPage() {
-  const [records, setRecords] = useState(seedCustomers);
+  const [records, setRecords] = useState<CustomerRecord[]>([]);
+  const [nodeRecords, setNodeRecords] = useState<NodeRecord[]>([]);
   const [draft, setDraft] = useState<CustomerRecord | null>(null);
   const [mode, setMode] = useState<"add" | "edit" | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function load() {
+      setIsLoading(true);
+      const [backendNodes, backendCustomers] = await Promise.all([listNodes(), listCustomersRaw()]);
+      if (cancelled) {
+        return;
+      }
+
+      const safeNodes = backendNodes ?? [];
+      setNodeRecords(safeNodes);
+      setRecords((backendCustomers ?? []).map((customer) => mapBackendCustomerToFrontend(customer, safeNodes)));
+      setIsLoading(false);
+    }
+
+    void load();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const activeCount = useMemo(() => records.filter((customer) => customer.status === "Active").length, [records]);
+  const nodeIdByName = useMemo(() => new Map(nodeRecords.map((node) => [node.name, Number(node.id)])), [nodeRecords]);
 
   function openAdd() {
     setMode("add");
@@ -36,7 +63,7 @@ export default function CustomersPage() {
     setDraft(null);
   }
 
-  function saveDraft() {
+  async function saveDraft() {
     if (!draft) {
       return;
     }
@@ -52,15 +79,40 @@ export default function CustomersPage() {
       return;
     }
 
+    const payload = {
+      name: cleaned.name,
+      status: cleaned.status,
+      notes: cleaned.notes,
+      dialer_ips: cleaned.dialerIps,
+      allowed_sip_node_ids: cleaned.allowedSipNodes
+        .map((nodeName) => nodeIdByName.get(nodeName))
+        .filter((value): value is number => typeof value === "number"),
+    };
+
+    const saved =
+      mode === "edit" && cleaned.id
+        ? await updateCustomer(cleaned.id, payload)
+        : await createCustomer(payload);
+
+    if (!saved) {
+      return;
+    }
+
+    const next = mapBackendCustomerToFrontend(saved, nodeRecords);
     setRecords((current) =>
       mode === "edit"
-        ? current.map((item) => (item.id === cleaned.id ? cleaned : item))
-        : [cleaned, ...current],
+        ? current.map((item) => (item.id === next.id ? next : item))
+        : [next, ...current],
     );
     closePanel();
   }
 
-  function removeCustomer(customerId: string) {
+  async function removeCustomer(customerId: string) {
+    const ok = await deleteCustomer(customerId);
+    if (!ok) {
+      return;
+    }
+
     setRecords((current) => current.filter((customer) => customer.id !== customerId));
     if (draft?.id === customerId) {
       closePanel();
@@ -79,14 +131,14 @@ export default function CustomersPage() {
         <SectionCard title="Customer List" eyebrow="Dialer identity records" badge={<Badge tone="cyan">{records.length} customers</Badge>}>
           <SimpleTable
             columns={["Customer", "Allowed SIP Nodes", "Status", "Dialer IPs", "Actions"]}
-            rows={records.map((customer) => [
+            rows={(isLoading ? [] : records).map((customer) => [
               <div key={`${customer.id}-name`}>
                 <p className="font-semibold uppercase tracking-[0.08em] text-white">{customer.name}</p>
                 <p className="mt-1 text-xs text-slate-500">{customer.notes}</p>
               </div>,
               <div key={`${customer.id}-nodes`} className="space-y-1">
                 {customer.allowedSipNodes.map((nodeName) => {
-                  const sipIp = nodes.find((node) => node.name === nodeName)?.sipIp ?? "";
+                  const sipIp = nodeRecords.find((node) => node.name === nodeName)?.sipIp ?? "";
                   return (
                     <p key={nodeName} className="text-xs text-slate-300">
                       {nodeName} / {sipIp}
@@ -109,7 +161,7 @@ export default function CustomersPage() {
                 actions={[
                   { label: "View", href: `/customers/${customer.id}` },
                   { label: "Edit", onClick: () => openEdit(customer) },
-                  { label: "Delete", tone: "danger", onClick: () => removeCustomer(customer.id) },
+                  { label: "Delete", tone: "danger", onClick: () => void removeCustomer(customer.id) },
                 ]}
               />,
             ])}
@@ -128,15 +180,15 @@ export default function CustomersPage() {
       <OverlayPanel
         open={Boolean(draft)}
         title={mode === "edit" ? "Edit Customer" : "Add Customer"}
-        description="Save and cancel are local UI flows for now, so this stays easy to connect to the API later."
+        description="Cancel discards unsaved changes. Save writes the customer to persistent storage and reloads the saved values on refresh."
         onClose={closePanel}
         footer={
           <div className="flex flex-wrap gap-3">
             <ActionButton tone="muted" onClick={closePanel}>Cancel</ActionButton>
             {mode === "edit" && draft ? (
-              <ActionButton tone="danger" onClick={() => removeCustomer(draft.id)}>Delete</ActionButton>
+              <ActionButton tone="danger" onClick={() => void removeCustomer(draft.id)}>Delete</ActionButton>
             ) : null}
-            <ActionButton tone="primary" onClick={saveDraft}>{mode === "edit" ? "Update" : "Save"}</ActionButton>
+            <ActionButton tone="primary" onClick={() => void saveDraft()}>{mode === "edit" ? "Update" : "Save"}</ActionButton>
           </div>
         }
       >
@@ -168,7 +220,7 @@ export default function CustomersPage() {
                 value={draft.allowedSipNodes}
                 onChange={(event) => setDraft({ ...draft, allowedSipNodes: Array.from(event.target.selectedOptions, (option) => option.value) })}
               >
-                {nodes.map((node) => (
+                {nodeRecords.map((node) => (
                   <option key={node.id} value={node.name}>
                     {node.name} / {node.sipIp}
                   </option>

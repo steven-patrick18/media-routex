@@ -1,10 +1,12 @@
 "use client";
 
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { AppShell } from "@/components/app-shell";
 import { ActionButton, Badge, SectionCard } from "@/components/panel-primitives";
+import { getSettings, saveSettings } from "@/lib/api";
+import type { AppSettings } from "@/lib/types";
 
-const initialSettings = {
+const initialSettings: AppSettings = {
   selectionStrategy: "Balanced",
   defaultMaxCalls: 30,
   defaultMaxCps: 5,
@@ -17,6 +19,42 @@ const initialSettings = {
 export default function SettingsPage() {
   const [savedSettings, setSavedSettings] = useState(initialSettings);
   const [workingSettings, setWorkingSettings] = useState(initialSettings);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function load() {
+      const response = await getSettings();
+      if (!cancelled && response) {
+        setSavedSettings(response);
+        setWorkingSettings(response);
+      }
+    }
+
+    void load();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function handleSave() {
+    const response = await saveSettings(workingSettings);
+    if (!response) {
+      setStatusMessage("Settings save did not reach the backend.");
+      return;
+    }
+
+    setSavedSettings(response);
+    setWorkingSettings(response);
+    setStatusMessage("Settings saved to persistent storage.");
+  }
+
+  function handleCancel() {
+    setWorkingSettings(savedSettings);
+    setStatusMessage("Unsaved changes discarded.");
+  }
 
   return (
     <AppShell
@@ -59,9 +97,10 @@ export default function SettingsPage() {
           <Field label="Scope Notes">
             <textarea className={textareaClassName} rows={8} value={workingSettings.notes} onChange={(event) => setWorkingSettings({ ...workingSettings, notes: event.target.value })} />
           </Field>
+          {statusMessage ? <p className="mt-4 text-sm text-slate-300">{statusMessage}</p> : null}
           <div className="mt-5 flex flex-wrap gap-3">
-            <ActionButton tone="muted" onClick={() => setWorkingSettings(savedSettings)}>Cancel</ActionButton>
-            <ActionButton tone="primary" onClick={() => setSavedSettings(workingSettings)}>Save</ActionButton>
+            <ActionButton tone="muted" onClick={handleCancel}>Cancel</ActionButton>
+            <ActionButton tone="primary" onClick={() => void handleSave()}>Save</ActionButton>
           </div>
         </SectionCard>
       </section>

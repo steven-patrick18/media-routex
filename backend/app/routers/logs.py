@@ -3,8 +3,8 @@ import sqlite3
 from fastapi import APIRouter, Depends
 
 from app.dependencies import get_db
-from app.repository import list_logs
 from app.schemas import LogEntry
+from app.services.logs import list_logs
 
 router = APIRouter(prefix="/api/logs", tags=["logs"])
 

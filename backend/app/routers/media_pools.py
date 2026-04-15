@@ -3,8 +3,8 @@ import sqlite3
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.dependencies import get_db
-from app.repository import create_media_pool, delete_media_pool, get_media_pool, list_media_pools, update_media_pool
 from app.schemas import MediaPool, MediaPoolBase
+from app.services.media_pools import create_media_pool, delete_media_pool, get_media_pool, list_media_pools, update_media_pool
 
 router = APIRouter(prefix="/api/media-pools", tags=["media-pools"])
 

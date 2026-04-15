@@ -323,7 +323,20 @@ def create_media_pool(connection: sqlite3.Connection, payload: MediaPoolBase) ->
         INSERT INTO media_pool_ips (media_pool_id, node_ip_id, status, active_calls, max_concurrent_calls, current_cps, max_cps, weight, drain_mode)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        [(media_pool_id, ip_id, "Active", 0, 30, 0, 5, 1, 0) for ip_id in payload.assigned_media_ip_ids],
+        [
+            (
+                media_pool_id,
+                item.node_ip_id,
+                item.status,
+                item.active_calls,
+                item.max_concurrent_calls,
+                item.current_cps,
+                item.max_cps,
+                item.weight,
+                int(item.drain_mode),
+            )
+            for item in payload.assigned_media_ips
+        ],
     )
     connection.commit()
     return get_media_pool(connection, media_pool_id)
@@ -340,7 +353,20 @@ def update_media_pool(connection: sqlite3.Connection, media_pool_id: int, payloa
         INSERT INTO media_pool_ips (media_pool_id, node_ip_id, status, active_calls, max_concurrent_calls, current_cps, max_cps, weight, drain_mode)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        [(media_pool_id, ip_id, "Active", 0, 30, 0, 5, 1, 0) for ip_id in payload.assigned_media_ip_ids],
+        [
+            (
+                media_pool_id,
+                item.node_ip_id,
+                item.status,
+                item.active_calls,
+                item.max_concurrent_calls,
+                item.current_cps,
+                item.max_cps,
+                item.weight,
+                int(item.drain_mode),
+            )
+            for item in payload.assigned_media_ips
+        ],
     )
     connection.commit()
     return get_media_pool(connection, media_pool_id)
@@ -443,6 +469,7 @@ def _node_from_row(connection: sqlite3.Connection, row: sqlite3.Row) -> Node:
             NodeIp(
                 id=ip_row["id"],
                 ip_address=ip_row["ip_address"],
+                interface_name=ip_row["interface_name"],
                 ip_role=ip_row["ip_role"],
                 status=ip_row["status"],
                 active_calls=ip_row["active_calls"],

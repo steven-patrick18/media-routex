@@ -3,8 +3,8 @@ import sqlite3
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.dependencies import get_db
-from app.repository import create_vendor, delete_vendor, get_vendor, list_vendors, update_vendor
 from app.schemas import Vendor, VendorBase
+from app.services.vendors import create_vendor, delete_vendor, get_vendor, list_vendors, update_vendor
 
 router = APIRouter(prefix="/api/vendors", tags=["vendors"])
 

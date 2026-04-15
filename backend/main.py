@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.db import init_db
-from app.routers import auth, customers, dashboard, logs, media_pools, nodes, usage, vendors
+from app.routers import auth, customers, dashboard, logs, media_pools, nodes, settings, usage, vendors
 from app.schemas import HealthResponse
 
 
@@ -28,6 +28,7 @@ app.include_router(customers.router)
 app.include_router(vendors.router)
 app.include_router(nodes.router)
 app.include_router(media_pools.router)
+app.include_router(settings.router)
 app.include_router(dashboard.router)
 app.include_router(usage.router)
 app.include_router(logs.router)
