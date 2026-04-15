@@ -4,7 +4,8 @@ import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/app-shell";
 import { ActionButton, ActionsRow, Badge, OverlayPanel, SectionCard, SimpleTable } from "@/components/panel-primitives";
 import { createMediaPool, deleteMediaPool, listMediaPoolsRaw, listNodes, listNodesRaw, listVendorsRaw, mapBackendMediaPoolToFrontend, updateMediaPool } from "@/lib/api";
-import { getBalancedStrategyRules, getPoolStats, type MediaPoolRecord, type NodeRecord } from "@/lib/control-panel";
+import { getBalancedStrategyRules, getPoolStats } from "@/lib/helpers";
+import type { MediaPoolRecord, NodeRecord } from "@/lib/types";
 import type { BackendNode } from "@/lib/types";
 
 const emptyPool = (): MediaPoolRecord => ({
@@ -22,6 +23,7 @@ export default function MediaPoolsPage() {
   const [records, setRecords] = useState<MediaPoolRecord[]>([]);
   const [nodeRecords, setNodeRecords] = useState<NodeRecord[]>([]);
   const [backendNodes, setBackendNodes] = useState<BackendNode[]>([]);
+  const [vendorNamesById, setVendorNamesById] = useState<Map<number, string>>(new Map());
   const [draft, setDraft] = useState<MediaPoolRecord | null>(null);
   const [mediaIpEdit, setMediaIpEdit] = useState<{ poolId: string; address: string } | null>(null);
   const [mediaIpDraft, setMediaIpDraft] = useState<MediaPoolRecord["mediaIps"][number] | null>(null);
@@ -44,10 +46,11 @@ export default function MediaPoolsPage() {
       }
 
       const safeNodeRecords = nodesResponse ?? [];
-      const vendorNamesById = new Map((vendorsResponse ?? []).map((vendor) => [vendor.id, vendor.name]));
+      const nextVendorNamesById = new Map((vendorsResponse ?? []).map((vendor) => [vendor.id, vendor.name]));
       setNodeRecords(safeNodeRecords);
       setBackendNodes(nodesRawResponse ?? []);
-      setRecords((poolsResponse ?? []).map((pool) => mapBackendMediaPoolToFrontend(pool, safeNodeRecords, vendorNamesById)));
+      setVendorNamesById(nextVendorNamesById);
+      setRecords((poolsResponse ?? []).map((pool) => mapBackendMediaPoolToFrontend(pool, safeNodeRecords, nextVendorNamesById)));
       setIsLoading(false);
     }
 
@@ -125,7 +128,7 @@ export default function MediaPoolsPage() {
       return null;
     }
 
-    return mapBackendMediaPoolToFrontend(saved, nodeRecords);
+    return mapBackendMediaPoolToFrontend(saved, nodeRecords, vendorNamesById);
   }
 
   async function savePool() {

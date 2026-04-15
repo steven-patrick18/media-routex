@@ -4,7 +4,7 @@ import { type ReactNode, useEffect, useState } from "react";
 import { AppShell } from "@/components/app-shell";
 import { ActionButton, ActionsRow, Badge, OverlayPanel, SectionCard, SimpleTable } from "@/components/panel-primitives";
 import { createNode, deleteNode, listNodes, mapBackendNodeToFrontend, testNodeConnection, updateNode } from "@/lib/api";
-import type { NodeRecord } from "@/lib/control-panel";
+import type { NodeRecord } from "@/lib/types";
 
 const emptyNode = (): NodeRecord => ({
   id: `node-${Date.now()}`,
@@ -98,6 +98,9 @@ export default function NodesPage() {
       notes: next.notes,
       status: next.status,
       sip_ip_id: null,
+      sip_port: next.sipPort,
+      sip_protocol: next.sipProtocol,
+      sip_status: next.sipStatus,
     };
 
     const saved = mode === "edit" && next.id ? await updateNode(next.id, payload) : await createNode(payload);

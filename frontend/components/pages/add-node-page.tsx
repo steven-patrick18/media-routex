@@ -41,6 +41,9 @@ export function AddNodePageView() {
       notes: form.notes.trim(),
       status: "Provisioning",
       sip_ip_id: null,
+      sip_port: 5060,
+      sip_protocol: "UDP",
+      sip_status: "Standby",
     };
 
     if (!payload.name || !payload.main_ip || !payload.ssh_username || !payload.ssh_password) {

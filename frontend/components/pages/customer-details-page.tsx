@@ -1,6 +1,6 @@
 import { AppShell } from "@/components/app-shell";
 import { Badge, SectionCard, SimpleTable } from "@/components/panel-primitives";
-import type { CustomerRecord, NodeRecord } from "@/lib/control-panel";
+import type { CustomerRecord, NodeRecord } from "@/lib/types";
 
 export function CustomerDetailsPageView({ customer, nodes }: { customer: CustomerRecord; nodes: NodeRecord[] }) {
 

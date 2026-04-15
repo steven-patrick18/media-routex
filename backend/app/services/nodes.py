@@ -5,14 +5,17 @@ import sqlite3
 from app.repositories.nodes import (
     bulk_assign_media_ips,
     assign_node_ip_role,
+    create_node_ip,
     create_node,
+    delete_node_ip,
     delete_node,
     get_node,
     insert_or_update_node_ips,
     list_nodes,
+    update_node_ip,
     update_node,
 )
-from app.schemas import Node, NodeConnectionTestRequest, NodeConnectionTestResponse
+from app.schemas import Node, NodeConnectionTestRequest, NodeConnectionTestResponse, NodeIpBase
 from app.services.ip_discovery import parse_linux_ipv4_output
 from app.services.ssh_service import SshServiceError, run_ssh_command
 
@@ -55,3 +58,15 @@ def update_node_ip_role(connection: sqlite3.Connection, node_id: int, node_ip_id
 
 def bulk_assign_node_media_ips(connection: sqlite3.Connection, node_id: int, sip_node_ip_id: int) -> Node:
     return bulk_assign_media_ips(connection, node_id, sip_node_ip_id)
+
+
+def create_node_ip_record(connection: sqlite3.Connection, node_id: int, payload: NodeIpBase) -> Node:
+    return create_node_ip(connection, node_id, payload)
+
+
+def update_node_ip_record(connection: sqlite3.Connection, node_id: int, node_ip_id: int, payload: NodeIpBase) -> Node:
+    return update_node_ip(connection, node_id, node_ip_id, payload)
+
+
+def delete_node_ip_record(connection: sqlite3.Connection, node_id: int, node_ip_id: int) -> Node:
+    return delete_node_ip(connection, node_id, node_ip_id)

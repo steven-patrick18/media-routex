@@ -240,8 +240,8 @@ def get_node(connection: sqlite3.Connection, node_id: int) -> Node:
 def create_node(connection: sqlite3.Connection, payload: NodeBase) -> Node:
     cursor = connection.execute(
         """
-        INSERT INTO nodes (name, main_ip, ssh_port, ssh_username, ssh_password, os_type, purpose, region, notes, status, sip_ip_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO nodes (name, main_ip, ssh_port, ssh_username, ssh_password, os_type, purpose, region, notes, status, sip_ip_id, sip_port, sip_protocol, sip_status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             payload.name,
@@ -255,6 +255,9 @@ def create_node(connection: sqlite3.Connection, payload: NodeBase) -> Node:
             payload.notes,
             payload.status,
             payload.sip_ip_id,
+            payload.sip_port,
+            payload.sip_protocol,
+            payload.sip_status,
         ),
     )
     node_id = cursor.lastrowid
@@ -273,7 +276,7 @@ def update_node(connection: sqlite3.Connection, node_id: int, payload: NodeBase)
     connection.execute(
         """
         UPDATE nodes
-        SET name = ?, main_ip = ?, ssh_port = ?, ssh_username = ?, ssh_password = ?, os_type = ?, purpose = ?, region = ?, notes = ?, status = ?, sip_ip_id = ?
+        SET name = ?, main_ip = ?, ssh_port = ?, ssh_username = ?, ssh_password = ?, os_type = ?, purpose = ?, region = ?, notes = ?, status = ?, sip_ip_id = ?, sip_port = ?, sip_protocol = ?, sip_status = ?
         WHERE id = ?
         """,
         (
@@ -288,6 +291,9 @@ def update_node(connection: sqlite3.Connection, node_id: int, payload: NodeBase)
             payload.notes,
             payload.status,
             payload.sip_ip_id,
+            payload.sip_port,
+            payload.sip_protocol,
+            payload.sip_status,
             node_id,
         ),
     )
@@ -465,6 +471,9 @@ def _node_from_row(connection: sqlite3.Connection, row: sqlite3.Row) -> Node:
         notes=row["notes"],
         status=row["status"],
         sip_ip_id=row["sip_ip_id"],
+        sip_port=row["sip_port"],
+        sip_protocol=row["sip_protocol"],
+        sip_status=row["sip_status"],
         ips=[
             NodeIp(
                 id=ip_row["id"],

@@ -70,6 +70,9 @@ def init_db() -> None:
                 notes TEXT NOT NULL DEFAULT '',
                 status TEXT NOT NULL DEFAULT 'Provisioning',
                 sip_ip_id INTEGER,
+                sip_port INTEGER NOT NULL DEFAULT 5060,
+                sip_protocol TEXT NOT NULL DEFAULT 'UDP',
+                sip_status TEXT NOT NULL DEFAULT 'Standby',
                 FOREIGN KEY(sip_ip_id) REFERENCES node_ips(id)
             );
 
@@ -146,6 +149,9 @@ def init_db() -> None:
             """
         )
         _ensure_column(cursor, "nodes", "sip_ip_id", "INTEGER")
+        _ensure_column(cursor, "nodes", "sip_port", "INTEGER NOT NULL DEFAULT 5060")
+        _ensure_column(cursor, "nodes", "sip_protocol", "TEXT NOT NULL DEFAULT 'UDP'")
+        _ensure_column(cursor, "nodes", "sip_status", "TEXT NOT NULL DEFAULT 'Standby'")
         _ensure_column(cursor, "node_ips", "interface_name", "TEXT")
         connection.commit()
         seed_db(connection)
@@ -225,6 +231,8 @@ def seed_db(connection: sqlite3.Connection) -> None:
     }
     cursor.execute("UPDATE nodes SET sip_ip_id = ? WHERE id = ?", (node_ip_ids["10.10.0.12"], node_one))
     cursor.execute("UPDATE nodes SET sip_ip_id = ? WHERE id = ?", (node_ip_ids["10.20.0.22"], node_two))
+    cursor.execute("UPDATE nodes SET sip_port = 5060, sip_protocol = 'UDP', sip_status = 'Active' WHERE id = ?", (node_one,))
+    cursor.execute("UPDATE nodes SET sip_port = 5060, sip_protocol = 'UDP', sip_status = 'Standby' WHERE id = ?", (node_two,))
 
     cursor.execute(
         """

@@ -4,7 +4,7 @@ import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/app-shell";
 import { ActionButton, ActionsRow, Badge, OverlayPanel, SectionCard, SimpleTable } from "@/components/panel-primitives";
 import { createCustomer, deleteCustomer, listCustomersRaw, listNodes, mapBackendCustomerToFrontend, updateCustomer } from "@/lib/api";
-import type { CustomerRecord, NodeRecord } from "@/lib/control-panel";
+import type { CustomerRecord, NodeRecord } from "@/lib/types";
 
 const emptyCustomer = (): CustomerRecord => ({
   id: "",

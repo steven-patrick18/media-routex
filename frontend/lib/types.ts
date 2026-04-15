@@ -146,6 +146,9 @@ export type BackendNode = {
   notes: string;
   status: string;
   sip_ip_id: number | null;
+  sip_port: number;
+  sip_protocol: string;
+  sip_status: string;
   ips: BackendNodeIp[];
 };
 
@@ -272,6 +275,22 @@ export type NodeCreatePayload = {
   notes: string;
   status: string;
   sip_ip_id: number | null;
+  sip_port: number;
+  sip_protocol: string;
+  sip_status: string;
+};
+
+export type NodeIpPayload = {
+  ip_address: string;
+  interface_name?: string | null;
+  ip_role: string;
+  status: string;
+  active_calls: number;
+  max_concurrent_calls: number;
+  current_cps: number;
+  max_cps: number;
+  weight: number;
+  drain_mode: boolean;
 };
 
 export type CustomerPayload = {

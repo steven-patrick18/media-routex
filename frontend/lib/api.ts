@@ -16,6 +16,7 @@ import type {
   NodeConnectionTestResult,
   NodeCreatePayload,
   NodeIpAssignmentPayload,
+  NodeIpPayload,
   NodeRecord,
   VendorPayload,
   VendorRecord,
@@ -126,9 +127,9 @@ export function mapBackendNodeToFrontend(node: BackendNode, fallback?: NodeRecor
     notes: node.notes,
     status: (node.status as NodeRecord["status"]) ?? fallback?.status ?? "Provisioning",
     sipIp: sipIpRecord?.ip_address ?? "",
-    sipPort: fallback?.sipPort ?? 5060,
-    sipProtocol: fallback?.sipProtocol ?? "UDP",
-    sipStatus: fallback?.sipStatus ?? "Standby",
+    sipPort: node.sip_port ?? fallback?.sipPort ?? 5060,
+    sipProtocol: (node.sip_protocol as NodeRecord["sipProtocol"]) ?? fallback?.sipProtocol ?? "UDP",
+    sipStatus: (node.sip_status as NodeRecord["sipStatus"]) ?? fallback?.sipStatus ?? "Standby",
     ipPool: node.ips.map((item) => ({
       address: item.ip_address,
       role: mapNodeRole(item.ip_role),
@@ -314,6 +315,20 @@ export async function updateNode(nodeId: string | number, payload: NodeCreatePay
 
 export async function deleteNode(nodeId: string | number) {
   return deleteJson(`/api/nodes/${nodeId}`);
+}
+
+export async function createNodeIp(nodeId: string | number, payload: NodeIpPayload) {
+  return sendJson<BackendNode, NodeIpPayload>(`/api/nodes/${nodeId}/ips`, "POST", payload);
+}
+
+export async function updateNodeIp(nodeId: string | number, nodeIpId: number, payload: NodeIpPayload) {
+  return sendJson<BackendNode, NodeIpPayload>(`/api/nodes/${nodeId}/ips/${nodeIpId}`, "PUT", payload);
+}
+
+export async function deleteNodeIp(nodeId: string | number, nodeIpId: number) {
+  return fetch(`${API_BASE_URL}/api/nodes/${nodeId}/ips/${nodeIpId}`, { method: "DELETE" })
+    .then(async (response) => (response.ok ? ((await response.json()) as BackendNode) : null))
+    .catch(() => null);
 }
 
 export async function getSettings() {

@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
-import { navigation } from "@/lib/control-panel";
+import { navigation } from "@/lib/navigation";
 
 export function AppShell({
   title,

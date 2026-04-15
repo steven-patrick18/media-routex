@@ -1,6 +1,7 @@
 import { AppShell } from "@/components/app-shell";
 import { Badge, SectionCard, SimpleTable } from "@/components/panel-primitives";
-import { getBalancedStrategyRules, type NodeRecord, type VendorRecord } from "@/lib/control-panel";
+import { getBalancedStrategyRules } from "@/lib/helpers";
+import type { NodeRecord, VendorRecord } from "@/lib/types";
 
 export function VendorDetailsPageView({ vendor, nodes }: { vendor: VendorRecord; nodes: NodeRecord[] }) {
 

@@ -46,6 +46,9 @@ class NodeBase(BaseModel):
     notes: str = ""
     status: str = "Provisioning"
     sip_ip_id: int | None = None
+    sip_port: int = 5060
+    sip_protocol: str = "UDP"
+    sip_status: str = "Standby"
 
 
 class NodeIp(BaseModel):
@@ -81,6 +84,23 @@ class NodeConnectionTestResponse(BaseModel):
 
 class NodeIpAssignmentRequest(BaseModel):
     role: Literal["sip", "media", "unassign"]
+
+
+class NodeIpBase(BaseModel):
+    ip_address: str
+    interface_name: str | None = None
+    ip_role: str = "pool"
+    status: str = "active"
+    active_calls: int = 0
+    max_concurrent_calls: int = 30
+    current_cps: int = 0
+    max_cps: int = 5
+    weight: int = 1
+    drain_mode: bool = False
+
+
+class NodeIpUpdateRequest(NodeIpBase):
+    pass
 
 
 class NodeBulkMediaAssignmentRequest(BaseModel):
