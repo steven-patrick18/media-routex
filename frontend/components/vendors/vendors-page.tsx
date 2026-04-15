@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/app-shell";
 import { Badge, SectionCard } from "@/components/panel-primitives";
 import { VendorFormDrawer } from "@/components/vendors/vendor-form-drawer";
@@ -29,6 +29,27 @@ export function VendorsPageClient() {
   const [draft, setDraft] = useState<VendorRecord | null>(null);
   const [mode, setMode] = useState<"add" | "edit" | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+
+  const loadVendors = useCallback(async (message?: string) => {
+    setIsLoading(true);
+    const [backendNodes, backendPools, backendVendors] = await Promise.all([listNodes(), listMediaPoolsRaw(), listVendorsRaw()]);
+    if (!backendNodes || !backendPools || !backendVendors) {
+      setStatusMessage("Vendor data could not be refreshed from the backend. Keeping the last loaded values.");
+      setIsLoading(false);
+      return false;
+    }
+
+    const safeNodes = backendNodes;
+    const safePools = backendPools.map((pool) => mapBackendMediaPoolToFrontend(pool, safeNodes));
+
+    setNodeRecords(safeNodes);
+    setMediaPoolRecords(safePools);
+    setRecords(backendVendors.map((vendor) => mapBackendVendorToFrontend(vendor, safeNodes, safePools)));
+    setStatusMessage(message ?? "Loaded latest data from the backend.");
+    setIsLoading(false);
+    return true;
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -40,12 +61,19 @@ export function VendorsPageClient() {
         return;
       }
 
-      const safeNodes = backendNodes ?? [];
-      const safePools = (backendPools ?? []).map((pool) => mapBackendMediaPoolToFrontend(pool, safeNodes));
+      if (!backendNodes || !backendPools || !backendVendors) {
+        setStatusMessage("Vendor data could not be loaded from the backend.");
+        setIsLoading(false);
+        return;
+      }
+
+      const safeNodes = backendNodes;
+      const safePools = backendPools.map((pool) => mapBackendMediaPoolToFrontend(pool, safeNodes));
 
       setNodeRecords(safeNodes);
       setMediaPoolRecords(safePools);
-      setRecords((backendVendors ?? []).map((vendor) => mapBackendVendorToFrontend(vendor, safeNodes, safePools)));
+      setRecords(backendVendors.map((vendor) => mapBackendVendorToFrontend(vendor, safeNodes, safePools)));
+      setStatusMessage("Loaded latest data from the backend.");
       setIsLoading(false);
     }
 
@@ -100,9 +128,8 @@ export function VendorsPageClient() {
       return;
     }
 
-    const mapped = mapBackendVendorToFrontend(saved, nodeRecords, mediaPoolRecords);
-    setRecords((current) => (mode === "edit" ? current.map((item) => (item.id === mapped.id ? mapped : item)) : [mapped, ...current]));
     closePanel();
+    await loadVendors("Vendor saved successfully. Loaded latest data.");
   }
 
   async function removeVendor(vendorId: string) {
@@ -111,10 +138,10 @@ export function VendorsPageClient() {
       return;
     }
 
-    setRecords((current) => current.filter((vendor) => vendor.id !== vendorId));
     if (draft?.id === vendorId) {
       closePanel();
     }
+    await loadVendors("Vendor deleted. Loaded latest data.");
   }
 
   return (
@@ -130,6 +157,7 @@ export function VendorsPageClient() {
 
         <SectionCard title="Assignment Rule" eyebrow="Operator note" badge={<Badge tone="amber">Locked in scope</Badge>}>
           <div className="space-y-3 text-sm leading-7 text-slate-300">
+            {statusMessage ? <p className="text-cyan-200">{statusMessage}</p> : null}
             <p>Vendors can have multiple media pools.</p>
             <p>Customers do not get media pool assignment in this version.</p>
             <p>Balanced remains the default strategy.</p>

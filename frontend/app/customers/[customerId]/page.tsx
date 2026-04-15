@@ -1,6 +1,8 @@
 import { CustomerDetailsPageView } from "@/components/pages/customer-details-page";
 import { getCustomerRaw, listNodes, mapBackendCustomerToFrontend } from "@/lib/api";
 
+export const dynamic = "force-dynamic";
+
 export default async function CustomerDetailsPage({
   params,
 }: {

@@ -1,6 +1,6 @@
 "use client";
 
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/app-shell";
 import { ActionButton, ActionsRow, Badge, OverlayPanel, SectionCard, SimpleTable } from "@/components/panel-primitives";
 import { createMediaPool, deleteMediaPool, listMediaPoolsRaw, listNodes, listNodesRaw, listVendorsRaw, mapBackendMediaPoolToFrontend, updateMediaPool } from "@/lib/api";
@@ -29,6 +29,32 @@ export default function MediaPoolsPage() {
   const [mediaIpDraft, setMediaIpDraft] = useState<MediaPoolRecord["mediaIps"][number] | null>(null);
   const [mode, setMode] = useState<"add" | "edit" | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+
+  const loadMediaPools = useCallback(async (message?: string) => {
+    setIsLoading(true);
+    const [nodesResponse, nodesRawResponse, vendorsResponse, poolsResponse] = await Promise.all([
+      listNodes(),
+      listNodesRaw(),
+      listVendorsRaw(),
+      listMediaPoolsRaw(),
+    ]);
+    if (!nodesResponse || !nodesRawResponse || !vendorsResponse || !poolsResponse) {
+      setStatusMessage("Media pool data could not be refreshed from the backend. Keeping the last loaded values.");
+      setIsLoading(false);
+      return false;
+    }
+
+    const safeNodeRecords = nodesResponse;
+    const nextVendorNamesById = new Map(vendorsResponse.map((vendor) => [vendor.id, vendor.name]));
+    setNodeRecords(safeNodeRecords);
+    setBackendNodes(nodesRawResponse);
+    setVendorNamesById(nextVendorNamesById);
+    setRecords(poolsResponse.map((pool) => mapBackendMediaPoolToFrontend(pool, safeNodeRecords, nextVendorNamesById)));
+    setStatusMessage(message ?? "Loaded latest data from the backend.");
+    setIsLoading(false);
+    return true;
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -45,12 +71,19 @@ export default function MediaPoolsPage() {
         return;
       }
 
-      const safeNodeRecords = nodesResponse ?? [];
-      const nextVendorNamesById = new Map((vendorsResponse ?? []).map((vendor) => [vendor.id, vendor.name]));
+      if (!nodesResponse || !nodesRawResponse || !vendorsResponse || !poolsResponse) {
+        setStatusMessage("Media pool data could not be loaded from the backend.");
+        setIsLoading(false);
+        return;
+      }
+
+      const safeNodeRecords = nodesResponse;
+      const nextVendorNamesById = new Map(vendorsResponse.map((vendor) => [vendor.id, vendor.name]));
       setNodeRecords(safeNodeRecords);
-      setBackendNodes(nodesRawResponse ?? []);
+      setBackendNodes(nodesRawResponse);
       setVendorNamesById(nextVendorNamesById);
-      setRecords((poolsResponse ?? []).map((pool) => mapBackendMediaPoolToFrontend(pool, safeNodeRecords, nextVendorNamesById)));
+      setRecords(poolsResponse.map((pool) => mapBackendMediaPoolToFrontend(pool, safeNodeRecords, nextVendorNamesById)));
+      setStatusMessage("Loaded latest data from the backend.");
       setIsLoading(false);
     }
 
@@ -142,8 +175,8 @@ export default function MediaPoolsPage() {
       return;
     }
 
-    setRecords((current) => (mode === "edit" ? current.map((item) => (item.id === saved.id ? saved : item)) : [saved, ...current]));
     closeDraft();
+    await loadMediaPools("Media pool saved successfully. Loaded latest data.");
   }
 
   async function deletePool(poolId: string) {
@@ -152,10 +185,10 @@ export default function MediaPoolsPage() {
       return;
     }
 
-    setRecords((current) => current.filter((pool) => pool.id !== poolId));
     if (draft?.id === poolId) {
       closeDraft();
     }
+    await loadMediaPools("Media pool deleted. Loaded latest data.");
   }
 
   async function savePoolMediaIp() {
@@ -172,8 +205,8 @@ export default function MediaPoolsPage() {
       return;
     }
 
-    setRecords((current) => current.map((pool) => (pool.id === saved.id ? saved : pool)));
     closeMediaEditor();
+    await loadMediaPools("Media IP settings saved. Loaded latest data.");
   }
 
   async function removePoolMediaIp(poolId: string, address: string) {
@@ -190,7 +223,7 @@ export default function MediaPoolsPage() {
       return;
     }
 
-    setRecords((current) => current.map((pool) => (pool.id === saved.id ? saved : pool)));
+    await loadMediaPools("Media IP removed from the pool. Loaded latest data.");
   }
 
   const availableMediaOptions = (draft ? nodeRecords.filter((node) => node.name === draft.nodeName) : nodeRecords).flatMap((node) =>
@@ -206,10 +239,10 @@ export default function MediaPoolsPage() {
       headerActions={<ActionButton tone="primary" onClick={openAdd}>Add pool</ActionButton>}
     >
       <section className="grid gap-6 xl:grid-cols-[minmax(0,1.2fr)_320px]">
-        <SectionCard title="Pool List" eyebrow="Current pools" badge={<Badge tone="amber">{records.length} pools</Badge>}>
+        <SectionCard title="Pool List" eyebrow="Current pools" badge={<Badge tone={isLoading ? "amber" : "cyan"}>{isLoading ? "Loading" : `${records.length} pools`}</Badge>}>
           <SimpleTable
             columns={["Pool", "Node", "Status", "Active IPs", "Call Capacity", "CPS Capacity", "Actions"]}
-            rows={(isLoading ? [] : records).map((pool) => {
+            rows={records.map((pool) => {
               const stats = getPoolStats(pool);
               return [
                 <div key={`${pool.id}-name`}>
@@ -235,6 +268,7 @@ export default function MediaPoolsPage() {
 
         <SectionCard title="Pool Rules" eyebrow="Operator note" badge={<Badge tone="cyan">Balanced default</Badge>}>
           <div className="space-y-3 text-sm leading-7 text-slate-300">
+            {statusMessage ? <p className="text-cyan-200">{statusMessage}</p> : null}
             <p>Vendors can use multiple media pools.</p>
             <p>Customers do not get pool assignment anywhere in this version.</p>
             <p>Balanced still means least-used available media IP with disabled, draining, full, and CPS-limited IPs skipped.</p>

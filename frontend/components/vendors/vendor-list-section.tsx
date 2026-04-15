@@ -8,7 +8,7 @@ export function VendorListSection({
   nodeRecords,
   isLoading,
   onEdit,
-  onDelete,
+    onDelete,
 }: {
   records: VendorRecord[];
   nodeRecords: NodeRecord[];
@@ -17,10 +17,10 @@ export function VendorListSection({
   onDelete: (vendorId: string) => void;
 }) {
   return (
-    <SectionCard title="Vendor List" eyebrow="Current vendors" badge={<Badge tone="violet">{records.length} vendors</Badge>}>
+    <SectionCard title="Vendor List" eyebrow="Current vendors" badge={<Badge tone={isLoading ? "amber" : "violet"}>{isLoading ? "Loading" : `${records.length} vendors`}</Badge>}>
       <SimpleTable
         columns={["Vendor", "Vendor Target", "Allowed SIP Nodes", "Media Pools", "Actions"]}
-        rows={(isLoading ? [] : records).map((vendor) => [
+        rows={records.map((vendor) => [
           <div key={`${vendor.id}-name`}>
             <p className="font-semibold uppercase tracking-[0.08em] text-white">{vendor.name}</p>
             <p className="mt-1 text-xs text-slate-500">{vendor.notes}</p>

@@ -1,6 +1,8 @@
 import { VendorDetailsPageView } from "@/components/pages/vendor-details-page";
 import { getVendorRaw, listMediaPoolsRaw, listNodes, mapBackendMediaPoolToFrontend, mapBackendVendorToFrontend } from "@/lib/api";
 
+export const dynamic = "force-dynamic";
+
 export default async function VendorDetailsPage({
   params,
 }: {

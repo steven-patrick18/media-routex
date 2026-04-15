@@ -73,6 +73,8 @@ export function NodeDetailsPageClient({ nodeId }: { nodeId: string }) {
       const response = await getNodeRaw(nodeId);
       if (!cancelled && response) {
         hydrateFromBackendNode(response);
+        setStatusTone("emerald");
+        setStatusMessage("Loaded latest data from the backend.");
       }
     }
 

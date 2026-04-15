@@ -1,4 +1,3 @@
-import { mockControlPanelData } from "@/lib/mock-data";
 import type {
   AppSettings,
   BackendCustomer,
@@ -25,6 +24,11 @@ import type {
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
 
 type ApiMethod = "POST" | "PUT" | "PATCH" | "DELETE";
+
+function buildFreshPath(path: string) {
+  const separator = path.includes("?") ? "&" : "?";
+  return `${path}${separator}_ts=${Date.now()}`;
+}
 
 function mapNodeRole(role: string): NodeRecord["ipPool"][number]["role"] {
   if (role === "main") {
@@ -61,15 +65,23 @@ function mapMediaStatus(status: string): MediaPoolRecord["mediaIps"][number]["st
 
 async function requestJson<T>(path: string): Promise<T | null> {
   try {
-    const response = await fetch(`${API_BASE_URL}${path}`, {
-      headers: { "Content-Type": "application/json" },
+    const response = await fetch(`${API_BASE_URL}${buildFreshPath(path)}`, {
+      headers: {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        Pragma: "no-cache",
+        Expires: "0",
+      },
       cache: "no-store",
+      next: { revalidate: 0 },
     });
     if (!response.ok) {
+      console.warn(`[MediaRouteX API] GET ${path} failed with status ${response.status}.`);
       return null;
     }
     return (await response.json()) as T;
-  } catch {
+  } catch (error) {
+    console.warn(`[MediaRouteX API] GET ${path} failed.`, error);
     return null;
   }
 }
@@ -78,23 +90,43 @@ async function sendJson<TResponse, TPayload>(path: string, method: Exclude<ApiMe
   try {
     const response = await fetch(`${API_BASE_URL}${path}`, {
       method,
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        Pragma: "no-cache",
+        Expires: "0",
+      },
       body: JSON.stringify(payload),
+      cache: "no-store",
     });
     if (!response.ok) {
+      console.warn(`[MediaRouteX API] ${method} ${path} failed with status ${response.status}.`);
       return null;
     }
     return (await response.json()) as TResponse;
-  } catch {
+  } catch (error) {
+    console.warn(`[MediaRouteX API] ${method} ${path} failed.`, error);
     return null;
   }
 }
 
 async function deleteJson(path: string): Promise<boolean> {
   try {
-    const response = await fetch(`${API_BASE_URL}${path}`, { method: "DELETE" });
+    const response = await fetch(`${API_BASE_URL}${path}`, {
+      method: "DELETE",
+      headers: {
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        Pragma: "no-cache",
+        Expires: "0",
+      },
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      console.warn(`[MediaRouteX API] DELETE ${path} failed with status ${response.status}.`);
+    }
     return response.ok;
-  } catch {
+  } catch (error) {
+    console.warn(`[MediaRouteX API] DELETE ${path} failed.`, error);
     return false;
   }
 }
@@ -230,10 +262,10 @@ export async function getControlPanelData(): Promise<ControlPanelData> {
   ]);
 
   if (!dashboard || !customers || !vendors || !nodes || !mediaPools || !usage || !logs) {
-    return mockControlPanelData;
+    throw new Error("Control panel data is unavailable from the backend.");
   }
 
-  return mockControlPanelData;
+  throw new Error("Control panel aggregation has not been implemented in the API layer.");
 }
 
 export async function listNodesRaw() {
@@ -326,7 +358,15 @@ export async function updateNodeIp(nodeId: string | number, nodeIpId: number, pa
 }
 
 export async function deleteNodeIp(nodeId: string | number, nodeIpId: number) {
-  return fetch(`${API_BASE_URL}/api/nodes/${nodeId}/ips/${nodeIpId}`, { method: "DELETE" })
+  return fetch(`${API_BASE_URL}/api/nodes/${nodeId}/ips/${nodeIpId}`, {
+    method: "DELETE",
+    headers: {
+      "Cache-Control": "no-cache, no-store, must-revalidate",
+      Pragma: "no-cache",
+      Expires: "0",
+    },
+    cache: "no-store",
+  })
     .then(async (response) => (response.ok ? ((await response.json()) as BackendNode) : null))
     .catch(() => null);
 }

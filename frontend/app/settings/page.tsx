@@ -1,35 +1,52 @@
 "use client";
 
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { AppShell } from "@/components/app-shell";
 import { ActionButton, Badge, SectionCard } from "@/components/panel-primitives";
 import { getSettings, saveSettings } from "@/lib/api";
 import type { AppSettings } from "@/lib/types";
 
-const initialSettings: AppSettings = {
-  selectionStrategy: "Balanced",
-  defaultMaxCalls: 30,
-  defaultMaxCps: 5,
-  sourceIdentityRule: "Source dialer IP only",
-  customerPoolRule: "Customers do not receive media pools directly",
-  sipWhitelistRule: "Customers and vendors whitelist the selected node SIP IP",
-  notes: "No prefix matching, no real SIP or RTP engine, and no SSH scan automation in this phase.",
-};
-
 export default function SettingsPage() {
-  const [savedSettings, setSavedSettings] = useState(initialSettings);
-  const [workingSettings, setWorkingSettings] = useState(initialSettings);
+  const [savedSettings, setSavedSettings] = useState<AppSettings | null>(null);
+  const [workingSettings, setWorkingSettings] = useState<AppSettings | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  const loadSettings = useCallback(async (message?: string) => {
+    setIsLoading(true);
+    const response = await getSettings();
+    if (!response) {
+      setStatusMessage(savedSettings ? "Settings could not be refreshed from the backend. Keeping the last loaded values." : "Settings could not be loaded from the backend.");
+      setIsLoading(false);
+      return false;
+    }
+
+    setSavedSettings(response);
+    setWorkingSettings(response);
+    setStatusMessage(message ?? "Loaded latest data from the backend.");
+    setIsLoading(false);
+    return true;
+  }, [savedSettings]);
 
   useEffect(() => {
     let cancelled = false;
 
     async function load() {
       const response = await getSettings();
-      if (!cancelled && response) {
-        setSavedSettings(response);
-        setWorkingSettings(response);
+      if (cancelled) {
+        return;
       }
+
+      if (!response) {
+        setStatusMessage("Settings could not be loaded from the backend.");
+        setIsLoading(false);
+        return;
+      }
+
+      setSavedSettings(response);
+      setWorkingSettings(response);
+      setStatusMessage("Loaded latest data from the backend.");
+      setIsLoading(false);
     }
 
     void load();
@@ -40,18 +57,21 @@ export default function SettingsPage() {
   }, []);
 
   async function handleSave() {
+    if (!workingSettings) {
+      return;
+    }
     const response = await saveSettings(workingSettings);
     if (!response) {
       setStatusMessage("Settings save did not reach the backend.");
       return;
     }
-
-    setSavedSettings(response);
-    setWorkingSettings(response);
-    setStatusMessage("Settings saved to persistent storage.");
+    await loadSettings("Settings saved successfully. Loaded latest data.");
   }
 
   function handleCancel() {
+    if (!savedSettings) {
+      return;
+    }
     setWorkingSettings(savedSettings);
     setStatusMessage("Unsaved changes discarded.");
   }
@@ -63,6 +83,13 @@ export default function SettingsPage() {
       description="Platform defaults, media selection policy, and operator-facing rules stay editable here while heavier config management is still out of scope."
       activePath="/settings"
     >
+      {isLoading || !workingSettings ? (
+        <SectionCard title="Settings" eyebrow="Backend load" badge={<Badge tone="amber">Loading</Badge>}>
+          <p className="text-sm leading-7 text-slate-300">
+            {statusMessage ?? "Loading saved settings from the backend."}
+          </p>
+        </SectionCard>
+      ) : (
       <section className="grid gap-6 xl:grid-cols-2">
         <SectionCard title="Selection Policy Defaults" eyebrow="Media IP logic" badge={<Badge tone="emerald">Editable</Badge>}>
           <div className="space-y-4">
@@ -104,6 +131,7 @@ export default function SettingsPage() {
           </div>
         </SectionCard>
       </section>
+      )}
     </AppShell>
   );
 }

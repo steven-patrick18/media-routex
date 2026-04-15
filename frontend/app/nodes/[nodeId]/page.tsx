@@ -1,5 +1,7 @@
 import { NodeDetailsPageClient } from "@/components/nodes/node-details-page";
 
+export const dynamic = "force-dynamic";
+
 export default async function NodeDetailsPage({
   params,
 }: {

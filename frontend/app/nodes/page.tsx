@@ -1,9 +1,9 @@
 "use client";
 
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { AppShell } from "@/components/app-shell";
 import { ActionButton, ActionsRow, Badge, OverlayPanel, SectionCard, SimpleTable } from "@/components/panel-primitives";
-import { createNode, deleteNode, listNodes, mapBackendNodeToFrontend, testNodeConnection, updateNode } from "@/lib/api";
+import { createNode, deleteNode, listNodes, testNodeConnection, updateNode } from "@/lib/api";
 import type { NodeRecord } from "@/lib/types";
 
 const emptyNode = (): NodeRecord => ({
@@ -34,6 +34,22 @@ export default function NodesPage() {
   const [connectionMessage, setConnectionMessage] = useState<string | null>(null);
   const [connectionTone, setConnectionTone] = useState<"emerald" | "rose" | "amber">("amber");
   const [isLoading, setIsLoading] = useState(true);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+
+  const loadNodes = useCallback(async (message?: string) => {
+    setIsLoading(true);
+    const response = await listNodes();
+    if (!response) {
+      setStatusMessage("Node data could not be refreshed from the backend. Keeping the last loaded values.");
+      setIsLoading(false);
+      return false;
+    }
+
+    setRecords(response);
+    setStatusMessage(message ?? "Loaded latest data from the backend.");
+    setIsLoading(false);
+    return true;
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -42,7 +58,14 @@ export default function NodesPage() {
       setIsLoading(true);
       const response = await listNodes();
       if (!cancelled) {
-        setRecords(response ?? []);
+        if (!response) {
+          setStatusMessage("Node data could not be loaded from the backend.");
+          setIsLoading(false);
+          return;
+        }
+
+        setRecords(response);
+        setStatusMessage("Loaded latest data from the backend.");
         setIsLoading(false);
       }
     }
@@ -108,9 +131,8 @@ export default function NodesPage() {
       return;
     }
 
-    const mapped = mapBackendNodeToFrontend(saved, next);
-    setRecords((current) => (mode === "edit" ? current.map((item) => (item.id === mapped.id ? mapped : item)) : [mapped, ...current]));
     closePanel();
+    await loadNodes("Node saved successfully. Loaded latest data.");
   }
 
   async function removeNode(nodeId: string) {
@@ -119,10 +141,10 @@ export default function NodesPage() {
       return;
     }
 
-    setRecords((current) => current.filter((node) => node.id !== nodeId));
     if (draft?.id === nodeId) {
       closePanel();
     }
+    await loadNodes("Node deleted. Loaded latest data.");
   }
 
   async function handleTestConnection() {
@@ -156,10 +178,10 @@ export default function NodesPage() {
       headerActions={<ActionButton tone="primary" onClick={openAdd}>Add node</ActionButton>}
     >
       <section className="grid gap-6 xl:grid-cols-[minmax(0,1.2fr)_320px]">
-        <SectionCard title="Node Inventory" eyebrow="Server registry" badge={<Badge tone="emerald">{records.length} nodes</Badge>}>
+        <SectionCard title="Node Inventory" eyebrow="Server registry" badge={<Badge tone={isLoading ? "amber" : "emerald"}>{isLoading ? "Loading" : `${records.length} nodes`}</Badge>}>
           <SimpleTable
             columns={["Node", "SIP IP", "Traffic Role", "Region", "Media IPs", "Actions"]}
-            rows={(isLoading ? [] : records).map((node) => [
+            rows={records.map((node) => [
               <div key={`${node.id}-name`}>
                 <p className="font-semibold uppercase tracking-[0.08em] text-white">{node.name}</p>
                 <p className="mt-1 text-xs uppercase tracking-[0.12em] text-slate-500">{node.mainIp}</p>
@@ -182,6 +204,7 @@ export default function NodesPage() {
 
         <SectionCard title="Node Scope" eyebrow="What edits live here" badge={<Badge tone="cyan">Operator flow</Badge>}>
           <div className="space-y-3 text-sm leading-7 text-slate-300">
+            {statusMessage ? <p className="text-cyan-200">{statusMessage}</p> : null}
             <p>This screen covers add, edit, delete, and quick summary updates for each node.</p>
             <p>Open a node to edit IP pool records, SIP IP selection, media IP assignments, service placeholders, and usage limits.</p>
             <p>Monitoring stays available as the first base role, then the node can be used for SIP + MEDIA or ROUTING / GATEWAY.</p>

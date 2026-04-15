@@ -1,6 +1,6 @@
 "use client";
 
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/app-shell";
 import { ActionButton, ActionsRow, Badge, OverlayPanel, SectionCard, SimpleTable } from "@/components/panel-primitives";
 import { createCustomer, deleteCustomer, listCustomersRaw, listNodes, mapBackendCustomerToFrontend, updateCustomer } from "@/lib/api";
@@ -21,20 +21,44 @@ export default function CustomersPage() {
   const [draft, setDraft] = useState<CustomerRecord | null>(null);
   const [mode, setMode] = useState<"add" | "edit" | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+
+  const loadCustomers = useCallback(async (message?: string) => {
+    setIsLoading(true);
+    const [backendNodes, backendCustomers] = await Promise.all([listNodes(), listCustomersRaw()]);
+    if (!backendNodes || !backendCustomers) {
+      setStatusMessage("Customer data could not be refreshed from the backend. Keeping the last loaded values.");
+      setIsLoading(false);
+      return false;
+    }
+
+    const safeNodes = backendNodes ?? [];
+    setNodeRecords(safeNodes);
+    setRecords(backendCustomers.map((customer) => mapBackendCustomerToFrontend(customer, safeNodes)));
+    setStatusMessage(message ?? "Loaded latest data from the backend.");
+    setIsLoading(false);
+    return true;
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
 
     async function load() {
-      setIsLoading(true);
       const [backendNodes, backendCustomers] = await Promise.all([listNodes(), listCustomersRaw()]);
       if (cancelled) {
         return;
       }
 
-      const safeNodes = backendNodes ?? [];
+       if (!backendNodes || !backendCustomers) {
+        setStatusMessage("Customer data could not be loaded from the backend.");
+        setIsLoading(false);
+        return;
+      }
+
+      const safeNodes = backendNodes;
       setNodeRecords(safeNodes);
-      setRecords((backendCustomers ?? []).map((customer) => mapBackendCustomerToFrontend(customer, safeNodes)));
+      setRecords(backendCustomers.map((customer) => mapBackendCustomerToFrontend(customer, safeNodes)));
+      setStatusMessage("Loaded latest data from the backend.");
       setIsLoading(false);
     }
 
@@ -98,13 +122,8 @@ export default function CustomersPage() {
       return;
     }
 
-    const next = mapBackendCustomerToFrontend(saved, nodeRecords);
-    setRecords((current) =>
-      mode === "edit"
-        ? current.map((item) => (item.id === next.id ? next : item))
-        : [next, ...current],
-    );
     closePanel();
+    await loadCustomers("Customer saved successfully. Loaded latest data.");
   }
 
   async function removeCustomer(customerId: string) {
@@ -113,10 +132,10 @@ export default function CustomersPage() {
       return;
     }
 
-    setRecords((current) => current.filter((customer) => customer.id !== customerId));
     if (draft?.id === customerId) {
       closePanel();
     }
+    await loadCustomers("Customer deleted. Loaded latest data.");
   }
 
   return (
@@ -128,10 +147,10 @@ export default function CustomersPage() {
       headerActions={<ActionButton tone="primary" onClick={openAdd}>Add customer</ActionButton>}
     >
       <section className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
-        <SectionCard title="Customer List" eyebrow="Dialer identity records" badge={<Badge tone="cyan">{records.length} customers</Badge>}>
+        <SectionCard title="Customer List" eyebrow="Dialer identity records" badge={<Badge tone={isLoading ? "amber" : "cyan"}>{isLoading ? "Loading" : `${records.length} customers`}</Badge>}>
           <SimpleTable
             columns={["Customer", "Allowed SIP Nodes", "Status", "Dialer IPs", "Actions"]}
-            rows={(isLoading ? [] : records).map((customer) => [
+            rows={records.map((customer) => [
               <div key={`${customer.id}-name`}>
                 <p className="font-semibold uppercase tracking-[0.08em] text-white">{customer.name}</p>
                 <p className="mt-1 text-xs text-slate-500">{customer.notes}</p>
@@ -170,6 +189,7 @@ export default function CustomersPage() {
 
         <SectionCard title="Customer Rules" eyebrow="Scope note" badge={<Badge tone="amber">{activeCount} active</Badge>}>
           <div className="space-y-3 text-sm leading-7 text-slate-300">
+            {statusMessage ? <p className="text-cyan-200">{statusMessage}</p> : null}
             <p>Customers are identified only by dialer or source IP.</p>
             <p>Each customer can keep multiple dialer IPs and multiple allowed SIP nodes.</p>
             <p>Media pools are not assigned to customers anywhere in this version.</p>
